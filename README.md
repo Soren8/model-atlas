@@ -1,4 +1,4 @@
-# LLM Frontier 3D — cost : speed : intelligence
+# Model Atlas — Explore the AI Model Pareto Frontier in 3D
 
 Polished, responsive, interactive 3D scatter chart of LLM cost per task (x, log),
 speed (y, log) and intelligence (z), with a highlighted 3D Pareto frontier.
