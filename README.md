@@ -139,7 +139,11 @@ markers as measured points; trace label + hover carry the offer), including comp
 Contributor rows. The adjacent **Exclude $200+ tiers** checkbox (checked by
 default) hides $200/mo plans (Claude Max, Codex, Cursor Ultra) by monthly
 plan fee while keeping the $10/mo Go estimates (Go $30/$60 are quota
-amounts, not fees); uncheck to show all offers. Contributor stays always on.
+amounts, not fees), and keeps the $20/month Claude Pro and ChatGPT Plus/Codex
+scenarios visible; uncheck to show all offers including $200 tiers. These $20
+scenarios use transparent user-assumed scaling at half efficiency per dollar
+of the corresponding $200 proxy (Claude 40x → 20x; Codex 70x → 35x). They are
+not new audits or measured saturation values. Contributor stays always on.
 Axes and the green box still span all tiers, so the exclusion never rescales.
 Scenario cost is always
 `measured ÷ (multiplier × use)` at your quota/workload-use %; scenario
@@ -154,13 +158,15 @@ Fable rows are withheld from the 40x proxy (reduced Max limits, uncalibrated)
 while included in the Cursor pool. Source basis June 2026, reviewed
 2026-09-24; re-review when tiers/prices/promos change.
 
-### Evidence (plotted ratios are full-use empirical saturation, approximate)
+### Evidence (full-use estimates; $20 ratios are extrapolated)
 
 | Offer (trace/terms) | Fee | Plotted ratio | Basis | Lower-bound reference | Scope |
 | --- | --- | --- | --- | --- | --- |
 | Go quota-equiv (`Go $30/$60 quota-equiv est.`) | $10/mo | 3x / 6x ($10 over $30/$60) | [OpenCode Go](https://opencode.ai/docs/go/) quotas (5h 20% / weekly 50% / monthly 100%; $15 omitted; V4.1 Flash uses the active $60 promo until 2026-09-28T00:00Z, then disappears) | — | Curated exact snapshot ids, current era |
 | Claude Max $200 (`Claude Max $200 ~40x est.`) | $200 | ~40x | [SemiAnalysis methodology, June 10 2026](https://x.com/SemiAnalysis_/status/2064815044085318040) (weekly caps exhausted); [token-value numbers](https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans); [enterprise pricing](https://quesma.com/blog/claude-code-pricing-for-enterprise/) (Fable at reduced Max limits — omitted here as uncalibrated) | 39.07x — [July 1–20 self-audit](https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/) ($7814.13 vs $200) | Live current-era Anthropic Claude Opus/Sonnet/Haiku; Fable omitted (reduced limits), Mythos omitted (enterprise-only) |
+| Claude Pro $20 (`Claude Pro $20 ~20x est.`) | $20 | ~20x | Assumed half the per-dollar value of the Claude Max $200 ~40x scenario; **not independently measured** | — | Same Claude scope as above |
 | ChatGPT Pro/Codex $200 (`ChatGPT Pro/Codex $200 ~70x est.`) | $200 | ~70x | Same [SemiAnalysis June 10 2026 methodology](https://x.com/SemiAnalysis_/status/2064815044085318040); [token-value numbers](https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans) | 29.81x — [Aug 1–19 Codex audit](https://norml.studio/blog/ai-subscription-vs-api-pricing) ($5961.08 vs $200), reference only | Live current-era OpenAI GPT subscription rows (`gpt-*`, no `gpt-oss`); Mythos omitted if present (enterprise-only) |
+| ChatGPT Plus/Codex $20 (`ChatGPT Plus/Codex $20 ~35x est.`) | $20 | ~35x | Assumed half the per-dollar value of the ChatGPT Pro $200 ~70x scenario; **not independently measured** | — | Same GPT scope as above |
 | Cursor Ultra $200 (`Cursor Ultra $200 ~2x est.`) | $200 | ~2x | Last-published $400 third-party pool on the $200 tier (basis thru Aug 2026: [forum pools](https://forum.cursor.com/t/156411), [forum pools](https://forum.cursor.com/t/144918), [staff note July 2026](https://forum.cursor.com/t/166360)); current [Cursor pricing](https://cursor.com/docs/models-and-pricing) only says “Included” — current pool size unverified | — (Pro 1x / Pro+ ~1.17x too small, omitted) | Live current-era Claude/GPT/Gemini pool rows only (Fable included — Cursor lists Fable 5 rates); Meta/Grok/Composer and other labs excluded |
 
 The 40x/70x ratios are explicitly **not** the plan-official 5x/20x usage

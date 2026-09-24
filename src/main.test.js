@@ -1959,6 +1959,8 @@ describe('exclude $200+ tiers', () => {
     expect(trace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
     expect(trace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')).toBeUndefined();
     expect(trace(Plotly, 'Cursor Ultra $200 ~2x est.')).toBeUndefined();
+    expect(trace(Plotly, 'Claude Pro $20 ~20x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'ChatGPT Plus/Codex $20 ~35x est.')?.x).toHaveLength(1);
     // Contributor always on is unaffected.
     expect(trace(Plotly, 'Contributor (estimates)').x).toHaveLength(1);
 
@@ -1966,6 +1968,8 @@ describe('exclude $200+ tiers', () => {
     expect(bodyText).toContain('Contributor est.');
     expect(bodyText).toContain('Go $60 quota-equiv est.');
     expect(bodyText).not.toContain('Claude Max $200');
+    expect(bodyText).toContain('Claude Pro $20 ~20x est.');
+    expect(bodyText).toContain('ChatGPT Plus/Codex $20 ~35x est.');
     expect(bodyText).not.toContain('ChatGPT Pro/Codex $200');
     expect(bodyText).not.toContain('Cursor Ultra $200');
     expect(document.getElementById('counts').textContent).toContain('subscription estimates');
@@ -2019,13 +2023,19 @@ describe('exclude $200+ tiers', () => {
 
     const claudeMax = trace(Plotly, 'Claude Max $200 ~40x est.');
     const codex = trace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.');
+    const claudePro = trace(Plotly, 'Claude Pro $20 ~20x est.');
+    const codexPlus = trace(Plotly, 'ChatGPT Plus/Codex $20 ~35x est.');
     const ultra = trace(Plotly, 'Cursor Ultra $200 ~2x est.');
     expect(claudeMax).toBeDefined();
     expect(codex).toBeDefined();
     expect(ultra).toBeDefined();
+    expect(claudePro).toBeDefined();
+    expect(codexPlus).toBeDefined();
     expect(claudeMax.x).toHaveLength(1);
     expect(claudeMax.x[0]).toBeCloseTo(4.8 / 40, 10);
     expect(codex.x[0]).toBeCloseTo(1.4 / 70, 10);
+    expect(claudePro.x[0]).toBeCloseTo(4.8 / 20, 10);
+    expect(codexPlus.x[0]).toBeCloseTo(1.4 / 35, 10);
     expect(ultra.x).toHaveLength(3);
     for (const t of [claudeMax, codex, ultra]) expect(t.marker?.symbol).toBeUndefined();
     expect(claudeMax.marker.color).toEqual(['#cc785c']);
@@ -2044,6 +2054,8 @@ describe('exclude $200+ tiers', () => {
 
     const bodyText = document.getElementById('model-tbody').textContent;
     expect(bodyText).toContain('Claude Max $200 ~40x est.');
+    expect(bodyText).toContain('Claude Pro $20 ~20x est.');
+    expect(bodyText).toContain('ChatGPT Plus/Codex $20 ~35x est.');
     expect(bodyText).toContain('ChatGPT Pro/Codex $200 ~70x est.');
     expect(bodyText).toContain('Cursor Ultra $200 ~2x est.');
   });

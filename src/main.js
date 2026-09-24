@@ -24,6 +24,8 @@ import {
   GO_TRACE_NAME,
   CLAUDE_MAX_TRACE_NAME,
   CODEX_TRACE_NAME,
+  CLAUDE_PRO_TRACE_NAME,
+  CODEX_PLUS_TRACE_NAME,
   CURSOR_ULTRA_TRACE_NAME,
 } from './lib.js';
 import { DEALS_REVIEWED } from './deals.js';
@@ -448,6 +450,13 @@ function dealHoverText(m) {
     lines.push(`ChatGPT Pro/Codex $${d.fee} lab-wide workload proxy: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
     lines.push('Full-use empirical saturation (SemiAnalysis June 2026; Aug audit 29.81x is a lower bound, not plotted)');
     lines.push('Not the plan-official 5x/20x labels; scenario workload, no guaranteed current capacity');
+  } else if (d.kind === 'claude-pro' || d.kind === 'codex-plus') {
+    const pct = Math.round(d.utilization * 100);
+    const plan = d.kind === 'claude-pro' ? 'Claude Pro' : 'ChatGPT Plus/Codex';
+    const parent = d.kind === 'claude-pro' ? 'Claude Max' : 'ChatGPT Pro/Codex';
+    lines.push(`${plan} $${d.fee} est.: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
+    lines.push(`User-assumed half efficiency per dollar of the $200 ${parent} proxy; no new audit or measured ratio`);
+    lines.push('Scenario workload, no guaranteed current capacity');
   } else if (d.kind === 'cursor-ultra') {
     const pct = Math.round(d.utilization * 100);
     lines.push(`Cursor Ultra $${d.fee} third-party allowance est.: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
@@ -671,6 +680,8 @@ function traces(shown, frontier, colors) {
   const goShown = shown.filter((m) => m.deal?.kind === 'go' || m.deal?.kind === 'contributor-go');
   const claudeMaxShown = shown.filter((m) => m.deal?.kind === 'claude-max');
   const codexShown = shown.filter((m) => m.deal?.kind === 'codex');
+  const claudeProShown = shown.filter((m) => m.deal?.kind === 'claude-pro');
+  const codexPlusShown = shown.filter((m) => m.deal?.kind === 'codex-plus');
   const cursorUltraShown = shown.filter((m) => m.deal?.kind === 'cursor-ultra');
   const rest = shown.filter((m) => !m.deal && !frontierIds.has(m.id));
   const front = shown.filter((m) => !m.deal && frontierIds.has(m.id));
@@ -748,6 +759,12 @@ function traces(shown, frontier, colors) {
   }
   if (codexShown.length) {
     data.push(estimateTrace(CODEX_TRACE_NAME, codexShown));
+  }
+  if (claudeProShown.length) {
+    data.push(estimateTrace(CLAUDE_PRO_TRACE_NAME, claudeProShown));
+  }
+  if (codexPlusShown.length) {
+    data.push(estimateTrace(CODEX_PLUS_TRACE_NAME, codexPlusShown));
   }
   if (cursorUltraShown.length) {
     data.push(estimateTrace(CURSOR_ULTRA_TRACE_NAME, cursorUltraShown));

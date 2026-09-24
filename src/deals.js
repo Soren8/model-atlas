@@ -25,9 +25,13 @@
  *    the weekly caps; secondary token-value writeups; Quesma enterprise
  *    pricing notes; lower-bounded by an independent July 1–20 audit
  *    ($7814.13 API value vs the $200 fee ⇒ 39.07x).
+ *  - Claude Pro $20 ~20x: transparent user-assumed estimate at half
+ *    efficiency per dollar of the $200 Max proxy; not a new audit.
  *  - ChatGPT Pro/Codex $200 ~70x: same SemiAnalysis June 10 2026
  *    methodology; independent Aug 1–19 Codex audit ($5961.08 vs $200 ⇒
  *    29.81x) as a lower-bound reference, not the plotted ratio.
+ *  - ChatGPT Plus/Codex $20 ~35x: transparent user-assumed estimate at half
+ *    efficiency per dollar of the $200 Codex proxy; not a new audit.
  *  - Cursor Ultra $200 ~2x: last-published third-party allowance ($400 pool
  *    on the $200 tier) as the estimate basis through Aug 2026; the current
  *    Cursor docs only say "Included" with no dollar sizes, so the current
@@ -157,8 +161,12 @@ export const GO_SUBSCRIPTION_USD = 10;
  */
 export const CLAUDE_MAX_FEE_USD = 200;
 export const CLAUDE_MAX_MULTIPLIER = 40;
+export const CLAUDE_PRO_FEE_USD = 20;
+export const CLAUDE_PRO_MULTIPLIER = 20;
 export const CODEX_FEE_USD = 200;
 export const CODEX_MULTIPLIER = 70;
+export const CODEX_PLUS_FEE_USD = 20;
+export const CODEX_PLUS_MULTIPLIER = 35;
 export const CURSOR_ULTRA_FEE_USD = 200;
 export const CURSOR_ULTRA_POOL_USD = 400;
 export const CURSOR_ULTRA_MULTIPLIER = 2;

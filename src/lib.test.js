@@ -21,6 +21,8 @@ import {
   GO_TRACE_NAME,
   CLAUDE_MAX_TRACE_NAME,
   CODEX_TRACE_NAME,
+  CLAUDE_PRO_TRACE_NAME,
+  CODEX_PLUS_TRACE_NAME,
   CURSOR_ULTRA_TRACE_NAME,
   DEALS_TRACE_NAME,
   dealLabel,
@@ -1117,13 +1119,17 @@ describe('Contributor always-on split', () => {
   it('names each subscription offer distinctly for hover, table and legend', () => {
     expect(CLAUDE_MAX_TRACE_NAME).toBe('Claude Max $200 ~40x est.');
     expect(CODEX_TRACE_NAME).toBe('ChatGPT Pro/Codex $200 ~70x est.');
+    expect(CLAUDE_PRO_TRACE_NAME).toBe('Claude Pro $20 ~20x est.');
+    expect(CODEX_PLUS_TRACE_NAME).toBe('ChatGPT Plus/Codex $20 ~35x est.');
     expect(CURSOR_ULTRA_TRACE_NAME).toBe('Cursor Ultra $200 ~2x est.');
     expect(GO_TRACE_NAME).toMatch(/Go/i);
     expect(new Set(SUBSCRIPTION_TRACE_NAMES)).toEqual(
-      new Set([GO_TRACE_NAME, CLAUDE_MAX_TRACE_NAME, CODEX_TRACE_NAME, CURSOR_ULTRA_TRACE_NAME]),
+      new Set([GO_TRACE_NAME, CLAUDE_MAX_TRACE_NAME, CODEX_TRACE_NAME, CLAUDE_PRO_TRACE_NAME, CODEX_PLUS_TRACE_NAME, CURSOR_ULTRA_TRACE_NAME]),
     );
     expect(dealLabel({ kind: 'claude-max' })).toBe(CLAUDE_MAX_TRACE_NAME);
     expect(dealLabel({ kind: 'codex' })).toBe(CODEX_TRACE_NAME);
+    expect(dealLabel({ kind: 'claude-pro' })).toBe(CLAUDE_PRO_TRACE_NAME);
+    expect(dealLabel({ kind: 'codex-plus' })).toBe(CODEX_PLUS_TRACE_NAME);
     expect(dealLabel({ kind: 'cursor-ultra' })).toBe(CURSOR_ULTRA_TRACE_NAME);
   });
 
@@ -1316,6 +1322,25 @@ describe('subscription scenario points', () => {
     expect(point.deal).toMatchObject({ fee: 200, multiplier: 40, baseCost: 4.877844, utilization: 1 });
   });
 
+  it('derives user-assumed $20 Claude and Codex scenarios with inherited benchmark values', () => {
+    const claude = buildDealPoints([opusRow()], { era: 1, utilization: 0.5 })
+      .find((p) => p.deal?.kind === 'claude-pro');
+    const codex = buildDealPoints([gptRow()], { era: 1 })
+      .find((p) => p.deal?.kind === 'codex-plus');
+
+    expect(claude).toMatchObject({
+      id: 'sub:claude-opus-5-xhigh:claude-pro20x',
+      name: 'Claude Opus 5 (xhigh) (Claude Pro $20 ~20x est.)',
+      cost: 4.877844 / 10,
+      iq: 49.7,
+      time_sec: 100,
+      deal: { fee: 20, multiplier: 20, utilization: 0.5 },
+    });
+    expect(codex.cost).toBeCloseTo(1.541289 / 35, 10);
+    expect(codex.deal).toMatchObject({ fee: 20, multiplier: 35, utilization: 1 });
+    expect(dealAssumption(claude.deal)).toMatch(/user-assumed scaling, not a new audit/i);
+  });
+
   it('derives Codex and Cursor Ultra points for GPT rows, Cursor only for Gemini rows', () => {
     const gemini = model({
       id: 'gemini-3-8-flash-high',
@@ -1329,7 +1354,7 @@ describe('subscription scenario points', () => {
     const points = buildDealPoints([gptRow(), gemini], { era: 1 });
     const kindsFor = (id) => points.filter((p) => p.id.startsWith(`sub:${id}:`)).map((p) => p.deal.kind).sort();
 
-    expect(kindsFor('gpt-5-5-high')).toEqual(['codex', 'cursor-ultra']);
+    expect(kindsFor('gpt-5-5-high')).toEqual(['codex', 'codex-plus', 'cursor-ultra']);
     expect(kindsFor('gemini-3-8-flash-high')).toEqual(['cursor-ultra']);
     const codex = points.find((p) => p.deal?.kind === 'codex');
     expect(codex.cost).toBeCloseTo(1.541289 / 70, 10);
@@ -1413,12 +1438,27 @@ describe('subscription scenario points', () => {
     expect(contributor).toEqual([]);
     expect(subscription.every((p) => p.deal.kind !== 'contributor')).toBe(true);
     expect(subscription.map((p) => p.deal.kind).sort()).toEqual(
-      ['claude-max', 'codex', 'cursor-ultra', 'cursor-ultra'],
+      ['claude-max', 'claude-pro', 'codex', 'codex-plus', 'cursor-ultra', 'cursor-ultra'],
     );
   });
 });
 
 describe('exclude $200+ tiers by monthly fee', () => {
+  it('keeps $20 Claude and Codex estimates at half the $200 plan value per dollar', () => {
+    const rows = [
+      model({ id: 'claude-opus-5-xhigh', creator: 'Anthropic', name: 'Claude Opus 5', cost: 4.8, retired: false }),
+      model({ id: 'gpt-6-sol-high', creator: 'OpenAI', name: 'GPT-6 Sol', cost: 7, retired: false }),
+    ];
+
+    const visible = buildSubscriptionPoints(rows, { era: 1, excludeHighTiers: true });
+
+    expect(visible.map((p) => ({ creator: p.creator, fee: p.deal.fee, multiplier: p.deal.multiplier, cost: p.cost })))
+      .toEqual([
+        { creator: 'Anthropic', fee: 20, multiplier: 20, cost: 0.24 },
+        { creator: 'OpenAI', fee: 20, multiplier: 35, cost: 0.2 },
+      ]);
+  });
+
   function goRow(overrides = {}) {
     return model({
       id: 'glm-5-3-flash',
@@ -1462,6 +1502,8 @@ describe('exclude $200+ tiers by monthly fee', () => {
     expect(HIGH_TIER_FEE_THRESHOLD_USD).toBe(200);
     // Scenario descriptors carry their monthly fee.
     expect(subscriptionMonthlyFee({ kind: 'claude-max', fee: 200 })).toBe(200);
+    expect(subscriptionMonthlyFee({ kind: 'claude-pro', fee: 20 })).toBe(20);
+    expect(subscriptionMonthlyFee({ kind: 'codex-plus', fee: 20 })).toBe(20);
     expect(subscriptionMonthlyFee({ kind: 'codex', fee: 200 })).toBe(200);
     expect(subscriptionMonthlyFee({ kind: 'cursor-ultra', fee: 200 })).toBe(200);
     // Go quota-equiv bills at $10/mo: the $30/$60 values are quota amounts.
@@ -1496,7 +1538,8 @@ describe('exclude $200+ tiers by monthly fee', () => {
     expect(filtered.some((p) => p.deal.kind === 'codex')).toBe(false);
     expect(filtered.some((p) => p.deal.kind === 'cursor-ultra')).toBe(false);
     // Lower-cost Go estimates stay: direct Go $60 plus compounded Contributor-via-Go.
-    expect(filtered.map((p) => p.deal.kind).sort()).toEqual(['contributor-go', 'go']);
+    expect(filtered.map((p) => p.deal.kind).sort()).toEqual(['claude-pro', 'contributor-go', 'go']);
+    expect(filtered.some((p) => p.deal.kind === 'codex-plus')).toBe(false);
     expect(filtered.every((p) => subscriptionMonthlyFee(p.deal) < 200)).toBe(true);
     // Contributor always-on split is unaffected by the exclusion.
     expect(buildContributorPoints(rows, { era: 1 }).map((p) => p.deal.kind)).toEqual(['contributor']);
@@ -1506,9 +1549,11 @@ describe('exclude $200+ tiers by monthly fee', () => {
     const rows = [goRow(), opusRow()];
     const excluded = buildSubscriptionPoints(rows, { era: 1, excludeHighTiers: true });
     expect(excluded.some((p) => p.deal.kind === 'claude-max')).toBe(false);
+    expect(excluded.some((p) => p.deal.kind === 'claude-pro')).toBe(true);
 
     const points = eraDomainPoints(rows, { era: 1, utilization: 1 });
     expect(points.filter((p) => p.deal?.kind === 'claude-max')).toHaveLength(1);
+    expect(points.filter((p) => p.deal?.kind === 'claude-pro')).toHaveLength(1);
     const domains = eraChartDomains(rows, { era: 1, speedMode: 'time', utilization: 1 });
     const cheapest = Math.min(...buildDealPoints(rows, { era: 1 }).map((d) => d.cost));
     expect(domains.xBounds[0]).toBeCloseTo(cheapest, 10);

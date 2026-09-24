@@ -17,8 +17,12 @@ import {
   MIN_NOTABLE_GO_TIER,
   CLAUDE_MAX_FEE_USD,
   CLAUDE_MAX_MULTIPLIER,
+  CLAUDE_PRO_FEE_USD,
+  CLAUDE_PRO_MULTIPLIER,
   CODEX_FEE_USD,
   CODEX_MULTIPLIER,
+  CODEX_PLUS_FEE_USD,
+  CODEX_PLUS_MULTIPLIER,
   CURSOR_ULTRA_FEE_USD,
   CURSOR_ULTRA_POOL_USD,
   CURSOR_ULTRA_MULTIPLIER,
@@ -317,11 +321,15 @@ export const SUBSCRIPTION_TRACE_NAME = 'Subscription estimates';
 export const GO_TRACE_NAME = 'Go quota-equiv est.';
 export const CLAUDE_MAX_TRACE_NAME = `Claude Max $${CLAUDE_MAX_FEE_USD} ~${CLAUDE_MAX_MULTIPLIER}x est.`;
 export const CODEX_TRACE_NAME = `ChatGPT Pro/Codex $${CODEX_FEE_USD} ~${CODEX_MULTIPLIER}x est.`;
+export const CLAUDE_PRO_TRACE_NAME = `Claude Pro $${CLAUDE_PRO_FEE_USD} ~${CLAUDE_PRO_MULTIPLIER}x est.`;
+export const CODEX_PLUS_TRACE_NAME = `ChatGPT Plus/Codex $${CODEX_PLUS_FEE_USD} ~${CODEX_PLUS_MULTIPLIER}x est.`;
 export const CURSOR_ULTRA_TRACE_NAME = `Cursor Ultra $${CURSOR_ULTRA_FEE_USD} ~${CURSOR_ULTRA_MULTIPLIER}x est.`;
 export const SUBSCRIPTION_TRACE_NAMES = [
   GO_TRACE_NAME,
   CLAUDE_MAX_TRACE_NAME,
   CODEX_TRACE_NAME,
+  CLAUDE_PRO_TRACE_NAME,
+  CODEX_PLUS_TRACE_NAME,
   CURSOR_ULTRA_TRACE_NAME,
 ];
 
@@ -405,6 +413,8 @@ export function dealLabel(deal) {
   if (deal.kind === 'contributor-go') return `Contributor via Go $${deal.tier} (compounded est.)`;
   if (deal.kind === 'claude-max') return CLAUDE_MAX_TRACE_NAME;
   if (deal.kind === 'codex') return CODEX_TRACE_NAME;
+  if (deal.kind === 'claude-pro') return CLAUDE_PRO_TRACE_NAME;
+  if (deal.kind === 'codex-plus') return CODEX_PLUS_TRACE_NAME;
   if (deal.kind === 'cursor-ultra') return CURSOR_ULTRA_TRACE_NAME;
   if (deal.kind === 'go') {
     return deal.promoActive
@@ -440,6 +450,13 @@ export function dealAssumption(deal) {
       `saturation, SemiAnalysis June 2026 weekly-caps-exhausted methodology, lower-bounded by a July ` +
       `1–20 audit at 39.07x; not the plan-official 5x/20x usage labels). Scenario workload, not the ` +
       `measured per-model task; no guaranteed current capacity. ${inherited}`;
+  }
+  if (deal.kind === 'claude-pro' || deal.kind === 'codex-plus') {
+    const plan = deal.kind === 'claude-pro' ? 'Claude Pro' : 'ChatGPT Plus/Codex';
+    const parent = deal.kind === 'claude-pro' ? 'Claude Max' : 'ChatGPT Pro/Codex';
+    return `${plan} $${deal.fee} estimate scaled from the corresponding ${parent} $200 proxy at half efficiency per dollar ` +
+      `(~${deal.multiplier}x total at ${pct}% use); user-assumed scaling, not a new audit. ` +
+      `Scenario workload, not the measured per-model task; no guaranteed current capacity. ${inherited}`;
   }
   if (deal.kind === 'codex') {
     return `ChatGPT Pro/Codex $${deal.fee} lab-wide workload proxy at ${pct}% use (~${deal.multiplier}x ` +
@@ -595,7 +612,8 @@ export function computeHoverTooltipPosition({
  * pure `estimateGoCost` formula still accepts $15 for general use.
  *
  * On top of the curated Go/Contributor entries, the sourced subscription
- * scenarios (`claude-max` 40x, `codex` 70x, `cursor-ultra` 2x) are derived
+  * scenarios (`claude-max` 40x, `codex` 70x, `claude-pro` 20x,
+  * `codex-plus` 35x, `cursor-ultra` 2x) are derived
  * per eligible live row of the selected era via `estimateSubscriptionCost`
  * (baseCost / (multiplier × utilization)). Scope is explicit per plan (see
  * deals.js helpers): retired rows, archive eras, Mythos enterprise-only rows,
@@ -710,6 +728,24 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
           },
         });
       }
+      const proCost = estimateSubscriptionCost(base.cost, CLAUDE_PRO_MULTIPLIER, { utilization: use });
+      if (proCost !== null) {
+        points.push({
+          ...base,
+          id: `sub:${base.id}:claude-pro${CLAUDE_PRO_MULTIPLIER}x`,
+          name: `${base.name} (${CLAUDE_PRO_TRACE_NAME})`,
+          cost: proCost,
+          deal: {
+            kind: 'claude-pro',
+            plan: `Claude Pro $${CLAUDE_PRO_FEE_USD}`,
+            fee: CLAUDE_PRO_FEE_USD,
+            multiplier: CLAUDE_PRO_MULTIPLIER,
+            baseCost: base.cost,
+            utilization: use,
+            parityNote: 'User-assumed half efficiency per dollar of the $200 Claude Max proxy; not a new audit.',
+          },
+        });
+      }
     }
     if (isCodexEligible(base)) {
       const cost = estimateSubscriptionCost(base.cost, CODEX_MULTIPLIER, { utilization: use });
@@ -727,6 +763,24 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
             baseCost: base.cost,
             utilization: use,
             parityNote: 'Lab-wide workload proxy; scenario workload, not the measured per-model task.',
+          },
+        });
+      }
+      const plusCost = estimateSubscriptionCost(base.cost, CODEX_PLUS_MULTIPLIER, { utilization: use });
+      if (plusCost !== null) {
+        points.push({
+          ...base,
+          id: `sub:${base.id}:codex-plus${CODEX_PLUS_MULTIPLIER}x`,
+          name: `${base.name} (${CODEX_PLUS_TRACE_NAME})`,
+          cost: plusCost,
+          deal: {
+            kind: 'codex-plus',
+            plan: `ChatGPT Plus/Codex $${CODEX_PLUS_FEE_USD}`,
+            fee: CODEX_PLUS_FEE_USD,
+            multiplier: CODEX_PLUS_MULTIPLIER,
+            baseCost: base.cost,
+            utilization: use,
+            parityNote: 'User-assumed half efficiency per dollar of the $200 Codex proxy; not a new audit.',
           },
         });
       }
@@ -768,8 +822,8 @@ export function buildContributorPoints(models, opts = {}) {
 
 /**
  * Subscription estimates only (`kind: 'go'` plus compounded
- * `kind: 'contributor-go'` plus the sourced `claude-max` / `codex` /
- * `cursor-ultra` scenarios). Shown only when the subscription toggle is on;
+ * `kind: 'contributor-go'` plus sourced `$200` and user-assumed `$20`
+ * Claude/Codex scenarios and Cursor Ultra). Shown only when the subscription toggle is on;
  * the cost axis/domain already contains them while off so enabling the toggle
  * never rescales. With `excludeHighTiers`, plans with a monthly fee at or
  * above `highFeeThreshold` (default $200) are omitted — Go stays because its
