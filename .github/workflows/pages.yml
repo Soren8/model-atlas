@@ -1,0 +1,45 @@
+name: Build and deploy (GitHub Pages)
+
+# Optional static-site deploy. Enable once in the repo settings:
+# Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Refresh commits use GITHUB_TOKEN, so deploy explicitly after that workflow.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Refresh model data]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build inside Docker
+        run: docker build --target export --output type=local,dest=dist .
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

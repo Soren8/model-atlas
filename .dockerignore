@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!nginx.conf
+!package.json
+!package-lock.json
+!index.html
+!vite.config.js
+!src/
+!src/**
+!public/
+!public/data/
+!public/data/models.json

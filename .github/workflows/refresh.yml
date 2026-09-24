@@ -1,0 +1,36 @@
+name: Refresh model data
+
+# Pulls the upstream llm-frontier JSON (derived from Artificial Analysis
+# measurements), normalizes it into public/data/models.json, and commits the
+# result. The refresh script preserves the previous snapshot on any failure
+# and skips the commit when measurements are unchanged.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *' # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Refresh snapshot
+        run: python3 scripts/refresh.py
+      - name: Commit updated snapshot
+        run: |
+          if git diff --quiet -- public/data/models.json; then
+            echo "measurements unchanged, nothing to commit"
+            exit 0
+          fi
+          git config user.name "llm-chart-refresh"
+          git config user.email "llm-chart-refresh@users.noreply.github.com"
+          git add public/data/models.json
+          git commit -m "data: refresh model snapshot $(date -u +%F)"
+          git push

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Interactive 3D chart of LLM cost vs speed vs intelligence, from Artificial Analysis measurements via CatalystNeuro llm-frontier."
+    />
+    <title>LLM Frontier 3D — Cost : Speed : Intelligence</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%234cc9f0'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div>
+        <h1>LLM Frontier <span class="dim">3D</span></h1>
+        <p class="subtitle">
+          Cost per task : speed : intelligence &mdash; interactive 3D scatter with
+          Pareto frontier
+        </p>
+      </div>
+      <div class="as-of" aria-live="polite">
+        <span id="counts">Loading&hellip;</span>
+        <span id="asof" class="dim"></span>
+      </div>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Chart controls">
+        <fieldset class="control-group" id="era-group">
+          <legend>Index era (never mixed)</legend>
+          <div id="era-options" class="radio-row" role="radiogroup" aria-label="Index era"></div>
+          <p class="hint dim" id="era-note"></p>
+        </fieldset>
+
+        <div class="control-group">
+          <label for="speed-mode">Speed axis (y)</label>
+          <select id="speed-mode">
+            <option value="time" selected>Time per task, s (lower is better)</option>
+            <option value="throughput">Throughput, tok/s (higher is better)</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="search">Search</label>
+          <input id="search" type="search" placeholder="model or provider&hellip;" autocomplete="off" />
+        </div>
+
+        <div class="control-group">
+          <label for="provider">Providers</label>
+          <select id="provider" multiple size="5" aria-label="Filter by provider"></select>
+        </div>
+
+        <div class="control-group checks">
+          <label><input type="checkbox" id="open-only" /> Open weights only</label>
+          <label><input type="checkbox" id="hide-retired" checked /> Hide retired</label>
+          <label><input type="checkbox" id="frontier-only" /> Frontier only</label>
+        </div>
+
+        <div class="control-group">
+          <label><input type="checkbox" id="deals-toggle" /> Deals (estimates)</label>
+          <label for="deals-util">Quota use, %</label>
+          <input id="deals-util" type="number" min="1" max="100" step="1" value="100" />
+          <p class="hint dim" id="deals-note"></p>
+        </div>
+
+        <div class="control-group buttons">
+          <button id="reset-camera" type="button">Reset camera</button>
+        </div>
+      </section>
+
+      <section class="chart-section" aria-label="3D chart">
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div id="chart" class="chart"></div>
+        <p class="hint dim">
+          Drag to rotate &middot; scroll to zoom &middot; right-drag to pan &middot;
+          hover a point for details. Log scale on cost and speed axes. The green
+          &ldquo;Preferred corner&rdquo; box marks the cheaper/faster/smarter octant
+          of the full era range &mdash; a relative guide, not an optimum.
+        </p>
+      </section>
+
+      <section class="table-section" aria-label="Model table">
+        <h2>Models <span class="dim" id="table-count"></span></h2>
+        <p class="hint dim">
+          Full data table (screen-reader and no-WebGL friendly). Sorting follows the
+          active speed metric; click a header to sort.
+        </p>
+        <div class="table-wrap">
+          <table id="model-table">
+            <thead>
+              <tr>
+                <th data-key="name" scope="col">Model</th>
+                <th data-key="creator" scope="col">Provider</th>
+                <th data-key="release" scope="col">Released</th>
+                <th data-key="iq" scope="col">Intelligence</th>
+                <th data-key="cost" scope="col">Cost / task</th>
+                <th data-key="deal" scope="col">Terms</th>
+                <th data-key="speed" scope="col" id="th-speed">Time / task</th>
+                <th data-key="tps" scope="col">tok/s</th>
+                <th data-key="open" scope="col">Open</th>
+                <th data-key="retired" scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody id="model-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="methodology" aria-label="Methodology and attribution">
+        <h2>Methodology &amp; data</h2>
+        <ul>
+          <li>
+            Cost is the measured billed cost per Intelligence Index task
+            <strong>including</strong> input, reasoning and answer tokens &mdash;
+            not a per-token price.
+          </li>
+          <li>
+            Speed is the measured end-to-end time per task (output speed, time to
+            first token, reasoning length and provider queueing combined).
+          </li>
+          <li>
+            Index eras are <strong>incomparable</strong>: scores and costs measured
+            under different index compositions are never mixed &mdash; pick one era
+            above.
+          </li>
+          <li>
+            The green &ldquo;Preferred corner&rdquo; box marks the
+            cheaper/faster/smarter octant of the full era range (split at
+            the log midpoint for cost and speed, mid-range for intelligence)
+            &mdash; a relative guide, not an optimum. It disappears when the
+            full era range collapses.
+          </li>
+          <li>
+            Data: <a href="https://artificialanalysis.ai/">Artificial Analysis</a>
+            measurements via the
+            <a href="https://llm-frontier.catalystneuro.com/">CatalystNeuro LLM Frontier</a>
+            updater (<a href="https://llm-frontier.catalystneuro.com/methodology/">methodology</a>,
+            <a href="https://github.com/catalystneuro/llm-frontier">code, BSD-3-Clause</a>).
+            Upstream data is governed by Artificial Analysis terms. See README for limits.
+          </li>
+          <li>
+            <strong>Deals (off by default)</strong> adds separately labeled
+            estimate points next to the measured ones: Meta Muse Spark
+            Contributor repricing for
+            <strong>Muse Spark 1.3 (xhigh)</strong> and 1.2 (xhigh) — Standard
+            rates $0.15/$1.25/$4.25 perM vs Contributor $0.002/$0.10/$0.20
+            (cached/input/output), blended at an assumed 7:2:1 mix
+            (.0414/.78, no per-task token counts published) — and OpenCode Go
+            quota-equivalent estimates ($10/mo over the $15/$30/$60 tier at
+            your quota-use %; rolling 5h 20% / weekly 50% / monthly 100%).
+            Estimates inherit benchmark intelligence/speed (not provider
+            measurements), assume benchmark cost meters at Go rates (never
+            exact parity), assume the full budget is spent on the modeled
+            tier, and ignore peak/off-peak and context-tier price splits.
+            Contributor pricing allows training use; Muse Spark (max) is
+            Standard-only and stays measured-only. Curated by hand in
+            <code>src/deals.js</code> from the
+            <a href="https://dev.meta.ai/docs/pricing-rate-limits">Meta pricing/rate-limits</a>,
+            <a href="https://dev.meta.ai/docs/reasoning">reasoning</a>,
+            <a href="https://dev.meta.ai/docs/models">models</a> and
+            <a href="https://opencode.ai/docs/go/">OpenCode Go</a> docs
+            (reviewed 2026-09-24; not auto-refreshed — re-check the sources;
+            DeepSeek V4.1 Flash uses the active 4x promo quota until
+            2026-09-28 UTC, then the base tier).
+          </li>
+        </ul>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
