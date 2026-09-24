@@ -110,10 +110,11 @@ describe('main initialization', () => {
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalled());
 
-    const data = Plotly.react.mock.calls.at(-1)[1];
-    expect(data.some((t) => t.name === 'Pareto frontier' && t.mode === 'markers')).toBe(true);
-    expect(data.every((t) => t.mode !== 'lines')).toBe(true);
-    expect(data.some((t) => t.name === 'Frontier path')).toBe(false);
+    const chart = document.getElementById('chart');
+    const mainData = Plotly.react.mock.calls.filter((c) => c[0] === chart).at(-1)[1];
+    expect(mainData.some((t) => t.name === 'Pareto frontier' && t.mode === 'markers')).toBe(true);
+    expect(mainData.every((t) => t.mode !== 'lines')).toBe(true);
+    expect(mainData.some((t) => t.name === 'Frontier path')).toBe(false);
   });
 
   it('reports malformed JSON instead of failing silently', async () => {
@@ -147,24 +148,40 @@ describe('main initialization', () => {
 });
 
 describe('preferred corner trace', () => {
+  // Contract: main stays scatter-only; the green box lives in a separate
+  // pointer-events:none overlay layer with the same ranges/camera.
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
+  function boxCalls(Plotly) {
+    const box = document.getElementById('chart-box');
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
   it('renders a translucent preferred-corner box without replacing markers', async () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
-    const data = Plotly.react.mock.calls.at(-1)[1];
-    const corner = data.find((t) => t.name === 'Preferred corner');
+    const mainData = mainCalls(Plotly).at(-1)[1];
+    expect(mainData.some((t) => t.type === 'mesh3d')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Preferred corner')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Models' && t.type === 'scatter3d')).toBe(true);
+    expect(mainData.some((t) => t.name === 'Pareto frontier' && t.type === 'scatter3d')).toBe(true);
 
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
+    const corner = boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner');
     expect(corner).toMatchObject({
       type: 'mesh3d',
       opacity: 0.15,
       hoverinfo: 'skip',
       flatshading: true,
     });
-    expect(data.some((t) => t.name === 'Models' && t.type === 'scatter3d')).toBe(true);
-    expect(data.some((t) => t.name === 'Pareto frontier' && t.type === 'scatter3d')).toBe(true);
     expect(Math.min(...corner.x)).toBe(0.5);
     expect(Math.max(...corner.x)).toBeCloseTo(1, 10);
     expect(Math.min(...corner.y)).toBe(5);
@@ -187,12 +204,13 @@ describe('preferred corner trace', () => {
     });
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
-    const data = Plotly.react.mock.calls.at(-1)[1];
-
-    expect(data.some((t) => t.name === 'Preferred corner')).toBe(false);
-    expect(data.some((t) => t.name === 'Models')).toBe(true);
+    const mainData = mainCalls(Plotly).at(-1)[1];
+    expect(mainData.some((t) => t.name === 'Preferred corner')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Models')).toBe(true);
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
+    expect(boxCalls(Plotly).at(-1)[1]).toEqual([]);
   });
 
   it('outlines model dots so dark brand fills stay visible without changing the fill', async () => {
@@ -200,9 +218,9 @@ describe('preferred corner trace', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
-    const data = Plotly.react.mock.calls.at(-1)[1];
+    const data = mainCalls(Plotly).at(-1)[1];
     const models = data.find((t) => t.name === 'Models');
     const frontier = data.find((t) => t.name === 'Pareto frontier');
 
@@ -216,59 +234,57 @@ describe('preferred corner trace', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
 
-    const data = Plotly.react.mock.calls.at(-1)[1];
-    const corner = data.find((t) => t.name === 'Preferred corner');
+    const overlayData = boxCalls(Plotly).at(-1)[1];
+    const corner = overlayData.find((t) => t.name === 'Preferred corner');
 
     expect(corner.opacity).toBe(0.15);
     expect(corner.hoverinfo).toBe('skip');
   });
 
-  it('detaches the highlight box from picking so dots hover through it', async () => {
+  it('keeps the highlight box out of the main pick scene in a non-interactive layer', async () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
     Plotly.react.mockClear();
-    const chart = document.getElementById('chart');
-    const boxMesh = {
-      pickId: 9,
-      pickSlots: 1,
-      drawPick() {},
-      pick(result) {
-        return result && result.id === this.pickId ? { index: 0 } : null;
-      },
-    };
-    const boxTrace = {
-      data: { name: 'Preferred corner', type: 'mesh3d', hoverinfo: 'skip' },
-      mesh: boxMesh,
-      handlePick(selection) {
-        return selection?.object === this.mesh;
-      },
-    };
-    const scatterPlot = {};
-    const scatterTrace = {
-      data: { name: 'Models', type: 'scatter3d' },
-      scatterPlot,
-      handlePick(selection) {
-        return selection?.object === this.scatterPlot;
-      },
-    };
-    chart._fullLayout = {
-      scene: { _scene: { traces: { box: boxTrace, scatter: scatterTrace } } },
-    };
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(boxTrace.handlePick({ object: boxMesh })).toBe(false));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
 
-    expect(boxMesh.pick({ id: 9 })).toBeNull();
-    expect(scatterTrace.handlePick({ object: scatterPlot })).toBe(true);
-    delete chart._fullLayout;
+    // Main plot holds scatter only so nothing occludes picks; the box lives
+    // in a separate pointer-events:none layer with no private pick hooks.
+    const mainData = mainCalls(Plotly).at(-1)[1];
+    expect(mainData.some((t) => t.type === 'mesh3d')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Preferred corner')).toBe(false);
+    const box = document.getElementById('chart-box');
+    expect(box).not.toBeNull();
+    expect(box.style.pointerEvents).toBe('none');
+    const overlayData = boxCalls(Plotly).at(-1)[1];
+    expect(overlayData.some((t) => t.name === 'Preferred corner')).toBe(true);
+    const lib = await import('./lib.js');
+    expect(lib.makeTraceUnpickable).toBeUndefined();
+    expect(lib.disablePreferredBoxPick).toBeUndefined();
   });
 });
 
 describe('intelligence axis ceiling', () => {
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
+  function boxCalls(Plotly) {
+    const box = document.getElementById('chart-box');
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
   function lastCall(Plotly) {
-    return Plotly.react.mock.calls.at(-1);
+    return mainCalls(Plotly).at(-1);
+  }
+
+  function lastBoxCall(Plotly) {
+    return boxCalls(Plotly).at(-1);
   }
 
   it('caps the intelligence axis at the selected-era max while keeping the top model plotted', async () => {
@@ -276,7 +292,7 @@ describe('intelligence axis ceiling', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const data = lastCall(Plotly)[1];
     const layout = lastCall(Plotly)[2];
@@ -294,14 +310,14 @@ describe('intelligence axis ceiling', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
     expect(lastCall(Plotly)[2].scene.zaxis.range).toEqual([0, 50]);
 
     // Frontier-only narrows the plotted set; the ceiling stays at the era max.
     const frontierOnly = document.getElementById('frontier-only');
     frontierOnly.checked = true;
     frontierOnly.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
     expect(lastCall(Plotly)[2].scene.zaxis.range).toEqual([0, 50]);
 
     // Narrowing providers so the top model leaves the plot must not move the ceiling.
@@ -310,14 +326,14 @@ describe('intelligence axis ceiling', () => {
       o.selected = o.value === 'Other';
     });
     provider.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
     expect(lastCall(Plotly)[2].scene.zaxis.range).toEqual([0, 50]);
 
     // Switching eras re-scopes the ceiling: era 0 tops out at 35, not the global 50.
     const era0 = document.querySelector('input[name="era"][value="0"]');
     era0.checked = true;
     era0.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(4));
     expect(lastCall(Plotly)[2].scene.zaxis.range).toEqual([0, 35]);
   });
 
@@ -336,18 +352,19 @@ describe('intelligence axis ceiling', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     // Narrow the plot to the Alpha pair (iq 40/45) while Beta (iq 50) keeps
-    // the era ceiling at 50.
+    // the era ceiling at 50. Search is debounced: wait for the second main
+    // render (overlay follows with the same camera/ranges).
     const search = document.getElementById('search');
     search.value = 'alpha';
     search.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
 
-    const data = lastCall(Plotly)[1];
     const layout = lastCall(Plotly)[2];
-    const corner = data.find((t) => t.name === 'Preferred corner');
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(2), { timeout: 4000 });
+    const corner = lastBoxCall(Plotly)[1].find((t) => t.name === 'Preferred corner');
 
     expect(layout.scene.zaxis.range).toEqual([0, 50]);
     expect(corner).toBeDefined();
@@ -397,19 +414,23 @@ describe('subscription toggle (Contributor always on)', () => {
     return lastCall(Plotly)[1].find((t) => t.name === name);
   }
 
+  function mainCount(Plotly) {
+    return mainCalls(Plotly).length;
+  }
+
   it('keeps Contributor always on while subscription stays off by default', async () => {
     useDealsDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
 
     // Direct Contributor (distinct token tariff) is always plotted in its own
-    // trace; subscription estimates wait for the toggle.
+    // trace; subscription estimates wait for the toggle. All markers round.
     const contributor = contributorTrace(Plotly);
     expect(contributor).toBeDefined();
     expect(contributor.type).toBe('scatter3d');
-    expect(contributor.marker.symbol).toBe('diamond');
+    expect(contributor.marker?.symbol).toBeUndefined();
     expect(contributor.x).toHaveLength(1);
     expect(contributor.text.join('\n')).toContain('not an Artificial Analysis measurement');
     expect(contributor.text.join('\n')).toContain('inherited benchmark');
@@ -436,11 +457,11 @@ describe('subscription toggle (Contributor always on)', () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(2));
 
     const data = lastCall(Plotly)[1];
     const contributor = contributorTrace(Plotly);
@@ -448,7 +469,9 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(contributor).toBeDefined();
     expect(go).toBeDefined();
     expect(go.type).toBe('scatter3d');
-    expect(go.marker.symbol).toBe('square');
+    // Round markers for all estimates; label + lab color carry the meaning.
+    expect(go.marker?.symbol).toBeUndefined();
+    expect(contributor.marker?.symbol).toBeUndefined();
     // Contributor trace stays at 1 direct point; the Go trace holds the
     // compounded Contributor-via-Go plus Go $60 for GLM 5.3 Flash.
     expect(contributor.x).toHaveLength(1);
@@ -486,7 +509,7 @@ describe('subscription toggle (Contributor always on)', () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
 
     const go = goTrace(Plotly);
     const idx = go.text.findIndex((t) => t.includes('GLM 5.3 Flash'));
@@ -503,13 +526,13 @@ describe('subscription toggle (Contributor always on)', () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
     // Contributor is already in the table before the subscription toggle.
     expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(2));
     expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
 
     document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
@@ -541,12 +564,12 @@ describe('subscription toggle (Contributor always on)', () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
     expect(offerTrace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCount(Plotly)).toBe(2));
 
     const data = lastCall(Plotly)[1];
     const claudeMax = offerTrace(Plotly, 'Claude Max $200 ~40x est.');
@@ -564,9 +587,11 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(codex.x[0]).toBeCloseTo(1.4 / 70, 10);
     expect(ultra.x).toHaveLength(4);
     expect(ultra.x).toContain(5 / 2);
-    // Distinct markers per offer, same provider colors as measured rows.
-    const symbols = new Set([claudeMax.marker.symbol, codex.marker.symbol, ultra.marker.symbol]);
-    expect(symbols.size).toBe(3);
+    // Same round markers for every offer, same provider colors as measured.
+    // Trace label + hover carry the offer meaning (no diamond/square/cross).
+    for (const t of [claudeMax, codex, ultra]) {
+      expect(t.marker?.symbol).toBeUndefined();
+    }
     expect(claudeMax.marker.color).toEqual(['#cc785c']);
     expect(codex.marker.color).toEqual(['#1f1f1f']);
     expect(new Set(ultra.marker.color)).toEqual(new Set(['#cc785c', '#1f1f1f', '#34A853']));
@@ -601,7 +626,7 @@ describe('subscription toggle (Contributor always on)', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     // Nothing plottable and no finite intelligence: leave scaling to Plotly.
     expect(lastCall(Plotly)[1]).toEqual([]);
@@ -610,8 +635,13 @@ describe('subscription toggle (Contributor always on)', () => {
 });
 
 describe('axis titles use the Plotly object form', () => {
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
   function lastPlot(Plotly) {
-    return Plotly.react.mock.calls.at(-1);
+    return mainCalls(Plotly).at(-1);
   }
 
   function titles(Plotly) {
@@ -628,7 +658,7 @@ describe('axis titles use the Plotly object form', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const { x, y, z } = titles(Plotly);
 
@@ -642,11 +672,11 @@ describe('axis titles use the Plotly object form', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     document.getElementById('speed-mode').value = 'throughput';
     document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
 
     const { x, y, z } = titles(Plotly);
 
@@ -657,8 +687,23 @@ describe('axis titles use the Plotly object form', () => {
 });
 
 describe('stable axis domains keep the grid fixed', () => {
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
+  function boxCalls(Plotly) {
+    const box = document.getElementById('chart-box');
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
   function lastPlot(Plotly) {
-    return Plotly.react.mock.calls.at(-1);
+    return mainCalls(Plotly).at(-1);
+  }
+
+  function lastBox(Plotly) {
+    return boxCalls(Plotly).at(-1);
   }
 
   function ranges(Plotly) {
@@ -671,7 +716,7 @@ describe('stable axis domains keep the grid fixed', () => {
   }
 
   function boxOf(Plotly) {
-    return lastPlot(Plotly)[1].find((t) => t.name === 'Preferred corner');
+    return lastBox(Plotly)?.[1].find((t) => t.name === 'Preferred corner');
   }
 
   function plottedPoints(Plotly) {
@@ -696,7 +741,7 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const initialRanges = ranges(Plotly);
     const initialBox = boxOf(Plotly);
@@ -706,10 +751,11 @@ describe('stable axis domains keep the grid fixed', () => {
 
     // Text search narrows the plotted set to Alpha only (singleton): the grid
     // and the full-domain box must not regenerate around the search.
+    // Search is debounced 150ms: wait for the next main render.
     const search = document.getElementById('search');
     search.value = 'alpha';
     search.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
 
     expect(ranges(Plotly).x).toEqual(initialRanges.x);
     expect(ranges(Plotly).y).toEqual(initialRanges.y);
@@ -721,14 +767,15 @@ describe('stable axis domains keep the grid fixed', () => {
     expect(searchBox.z).toEqual(initialBox.z);
 
     // Frontier-only must not move the grid either.
+    // Second search clear is debounced like the first.
     search.value = '';
     search.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3), { timeout: 4000 });
     const beforeFrontier = ranges(Plotly);
     const frontierOnly = document.getElementById('frontier-only');
     frontierOnly.checked = true;
     frontierOnly.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(4));
     expect(ranges(Plotly).x).toEqual(beforeFrontier.x);
     expect(ranges(Plotly).y).toEqual(beforeFrontier.y);
     expect(boxOf(Plotly).x).toEqual(initialBox.x);
@@ -736,13 +783,13 @@ describe('stable axis domains keep the grid fixed', () => {
     // Provider narrowing to a single provider keeps the same fixed grid.
     frontierOnly.checked = false;
     frontierOnly.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(5));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(5));
     const provider = document.getElementById('provider');
     [...provider.options].forEach((o) => {
       o.selected = o.value === 'Acme';
     });
     provider.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(6));
     expect(ranges(Plotly).x).toEqual(initialRanges.x);
     expect(ranges(Plotly).y).toEqual(initialRanges.y);
     expect(boxOf(Plotly).x).toEqual(initialBox.x);
@@ -750,17 +797,17 @@ describe('stable axis domains keep the grid fixed', () => {
     // Open-weights and retired toggles also leave the grid alone.
     [...provider.options].forEach((o) => { o.selected = false; });
     provider.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(7));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(7));
     const openOnly = document.getElementById('open-only');
     openOnly.checked = true;
     openOnly.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(8));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(8));
     expect(ranges(Plotly).x).toEqual(initialRanges.x);
     expect(ranges(Plotly).y).toEqual(initialRanges.y);
     const hideRetired = document.getElementById('hide-retired');
     hideRetired.checked = false;
     hideRetired.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(9));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(9));
     expect(ranges(Plotly).x).toEqual(initialRanges.x);
     expect(ranges(Plotly).y).toEqual(initialRanges.y);
     expect(boxOf(Plotly).x).toEqual(initialBox.x);
@@ -771,7 +818,7 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const data = lastPlot(Plotly)[1];
     const { x, y } = ranges(Plotly);
@@ -803,7 +850,7 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     // hide-retired is checked in the fixture, so the retired row is filtered
     // out of the plot — but the fixed domain still contains its cost.
@@ -816,14 +863,14 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const timeY = ranges(Plotly).y;
     expect(timeY).toBeDefined();
 
     document.getElementById('speed-mode').value = 'throughput';
     document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
 
     const tpsY = ranges(Plotly).y;
     expect(tpsY).toBeDefined();
@@ -836,7 +883,7 @@ describe('stable axis domains keep the grid fixed', () => {
     const era0 = document.querySelector('input[name="era"][value="0"]');
     era0.checked = true;
     era0.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
     expect(lastPlot(Plotly)[2].scene.zaxis.range).toEqual([0, 35]);
   });
 
@@ -853,7 +900,7 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     // Era 0 predates speed measurements: no plottable points, no box, but the
     // cost range still spans the era and the empty state stays accurate.
@@ -887,7 +934,7 @@ describe('stable axis domains keep the grid fixed', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     // Subscription off: the fixed cost range already contains the always-on
     // Contributor (~$0.07) plus all eligible subscription estimates
@@ -903,7 +950,7 @@ describe('stable axis domains keep the grid fixed', () => {
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
 
     expect(ranges(Plotly).x).toEqual(offRanges.x);
     expect(ranges(Plotly).y).toEqual(offRanges.y);
@@ -919,8 +966,13 @@ describe('stable axis domains keep the grid fixed', () => {
 });
 
 describe('hover tooltip stays off the dot', () => {
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
   function lastData(Plotly) {
-    return Plotly.react.mock.calls.at(-1)[1];
+    return mainCalls(Plotly).at(-1)[1];
   }
 
   it('suppresses the centered built-in hover card via public hoverinfo none', async () => {
@@ -928,7 +980,7 @@ describe('hover tooltip stays off the dot', () => {
     Plotly.react.mockClear();
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const data = lastData(Plotly);
     const hoverables = data.filter((t) => t.type === 'scatter3d');
@@ -952,7 +1004,7 @@ describe('hover tooltip stays off the dot', () => {
     };
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const chart = document.getElementById('chart');
     const tip = document.getElementById('chart-hover-tooltip');
@@ -1009,7 +1061,7 @@ describe('hover tooltip stays off the dot', () => {
     const search = document.getElementById('search');
     search.value = 'beta';
     search.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
     expect(tip.hidden).toBe(true);
 
     rectSpy.mockRestore();
@@ -1033,7 +1085,7 @@ describe('hover tooltip stays off the dot', () => {
     };
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const chart = document.getElementById('chart');
     vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
@@ -1041,7 +1093,7 @@ describe('hover tooltip stays off the dot', () => {
       toJSON: () => {},
     });
     chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 100, clientY: 100, bubbles: true }));
-    const PlotlyData = Plotly.react.mock.calls.at(-1)[1];
+    const PlotlyData = lastData(Plotly);
     let curveNumber = 0;
     let pointNumber = 0;
     outer: for (let ti = 0; ti < PlotlyData.length; ti++) {
@@ -1070,14 +1122,14 @@ describe('hover tooltip stays off the dot', () => {
     };
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const chart = document.getElementById('chart');
     vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
       toJSON: () => {},
     });
-    const data = Plotly.react.mock.calls.at(-1)[1];
+    const data = lastData(Plotly);
     let curveNumber = 0;
     let pointNumber = 0;
     outer: for (let ti = 0; ti < data.length; ti++) {
@@ -1127,7 +1179,7 @@ describe('hover tooltip stays off the dot', () => {
     };
 
     await import('./main.js');
-    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
     const chart = document.getElementById('chart');
     vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
@@ -1135,7 +1187,7 @@ describe('hover tooltip stays off the dot', () => {
       toJSON: () => {},
     });
     chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true }));
-    const data = Plotly.react.mock.calls.at(-1)[1];
+    const data = lastData(Plotly);
     let curveNumber = 0;
     let pointNumber = 0;
     outer: for (let ti = 0; ti < data.length; ti++) {
@@ -1158,5 +1210,670 @@ describe('hover tooltip stays off the dot', () => {
     expect(recreated).not.toBeNull();
     expect(recreated.hidden).toBe(false);
     expect(recreated.innerHTML).toContain('Alpha');
+  });
+});
+
+describe('camera persistence', () => {
+  // Mock caveat: the Plotly mock cannot replicate the real gl3d scene object
+  // (`gd._fullLayout.scene._scene.getCamera()`). These tests exercise the
+  // public event API instead: the chart emits `plotly_relayout` on mouseup /
+  // wheel and `plotly_relayouting` mid-drag with either a full
+  // `scene.camera` object or partial `scene.camera.eye.x`-style keys. The fix
+  // must track those events and replay the stored camera on every react.
+  const USER_CAMERA = {
+    eye: { x: 0.2, y: 0.4, z: 2.5 },
+    center: { x: 0.1, y: -0.2, z: 0.05 },
+    up: { x: 0, y: 0, z: 1 },
+    projection: { type: 'perspective' },
+  };
+  const DEFAULT_EYE = { x: 1.7, y: -1.5, z: 0.9 };
+
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
+  function lastLayout(Plotly) {
+    return mainCalls(Plotly).at(-1)[2];
+  }
+
+  function lastCamera(Plotly) {
+    return lastLayout(Plotly)?.scene?.camera;
+  }
+
+  function lastMainData(Plotly) {
+    return mainCalls(Plotly).at(-1)[1];
+  }
+
+  function captureHandlers() {
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      handlers[name] = fn;
+    };
+    return handlers;
+  }
+
+  function dragTo(handlers, camera = USER_CAMERA) {
+    expect(typeof handlers['plotly_relayout']).toBe('function');
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(camera)) });
+  }
+
+  it('starts at the default eye before any interaction', async () => {
+    captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    expect(lastCamera(Plotly)).toMatchObject({ eye: DEFAULT_EYE });
+  });
+
+  it('keeps the dragged camera across a search filter', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+
+    const search = document.getElementById('search');
+    search.value = 'alpha';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
+
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+
+  it('keeps the dragged camera across every filter control', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+    let calls = 1;
+
+    const provider = document.getElementById('provider');
+    [...provider.options].forEach((o) => { o.selected = o.value === 'Acme'; });
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    const frontierOnly = document.getElementById('frontier-only');
+    frontierOnly.checked = true;
+    frontierOnly.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+    frontierOnly.checked = false;
+    frontierOnly.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    const openOnly = document.getElementById('open-only');
+    openOnly.checked = true;
+    openOnly.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+    openOnly.checked = false;
+    openOnly.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    const hideRetired = document.getElementById('hide-retired');
+    hideRetired.checked = false;
+    hideRetired.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    document.getElementById('speed-mode').value = 'throughput';
+    document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+    document.getElementById('speed-mode').value = 'time';
+    document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    const era0 = document.querySelector('input[name="era"][value="0"]');
+    era0.checked = true;
+    era0.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(++calls));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+
+  it('keeps the camera through empty to populated transitions', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+
+    const search = document.getElementById('search');
+    search.value = 'zzz-no-such-model';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
+
+    expect(lastMainData(Plotly)).toEqual([]);
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3), { timeout: 4000 });
+
+    expect(lastMainData(Plotly).length).toBeGreaterThan(0);
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+
+  it('keeps the camera across subscription toggle and utilization', async () => {
+    document.body.innerHTML = FIXTURE.replace(
+      '<input id="frontier-only" type="checkbox" />',
+      `<input id="frontier-only" type="checkbox" />
+<input id="deals-toggle" type="checkbox" />
+<input id="deals-util" type="number" value="100" />
+<p id="deals-note"></p>`,
+    );
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+
+    document.getElementById('deals-toggle').checked = true;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    const util = document.getElementById('deals-util');
+    util.value = '50';
+    util.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    document.getElementById('deals-toggle').checked = false;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(4));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+
+  it('merges partial nested camera keys without losing orientation', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+    expect(typeof handlers['plotly_relayout']).toBe('function');
+    handlers['plotly_relayout']({
+      'scene.camera.eye.x': 9,
+      'scene.camera.center.z': 0.99,
+    });
+
+    const search = document.getElementById('search');
+    search.value = 'alpha';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
+
+    expect(lastCamera(Plotly)).toEqual({
+      eye: { x: 9, y: USER_CAMERA.eye.y, z: USER_CAMERA.eye.z },
+      center: { x: USER_CAMERA.center.x, y: USER_CAMERA.center.y, z: 0.99 },
+      up: USER_CAMERA.up,
+      projection: USER_CAMERA.projection,
+    });
+  });
+
+  it('tracks mid-drag relayouting events as well as relayout', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    expect(typeof handlers['plotly_relayouting']).toBe('function');
+    handlers['plotly_relayouting']({ 'scene.camera': JSON.parse(JSON.stringify(USER_CAMERA)) });
+
+    document.getElementById('frontier-only').checked = true;
+    document.getElementById('frontier-only').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+
+  it('restores the default camera only on explicit reset', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+
+    const search = document.getElementById('search');
+    search.value = 'alpha';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2), { timeout: 4000 });
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+
+    document.getElementById('reset-camera').dispatchEvent(new Event('click', { bubbles: true }));
+    expect(Plotly.relayout).toHaveBeenCalledWith(
+      document.getElementById('chart'),
+      { 'scene.camera': { eye: DEFAULT_EYE } },
+    );
+
+    // The stored camera follows the reset, so the next filter uses default.
+    // Clear is debounced like other searches.
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3), { timeout: 4000 });
+    expect(lastCamera(Plotly)).toEqual({ eye: DEFAULT_EYE });
+  });
+
+  it('wires camera events once after the first plot', async () => {
+    let onCalls = 0;
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      onCalls += 1;
+      handlers[name] = fn;
+    };
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    expect(handlers['plotly_relayout']).toBeDefined();
+    expect(handlers['plotly_relayouting']).toBeDefined();
+    const wiredCalls = onCalls;
+
+    document.getElementById('frontier-only').checked = true;
+    document.getElementById('frontier-only').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    expect(onCalls).toBe(wiredCalls);
+  });
+
+  it('keeps the camera stable across sort and resize without extra resets', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    dragTo(handlers);
+    // Drag schedules the overlay camera sync via RAF: let it land before
+    // baselining so sort/resize are measured without the pending drag sync.
+    await new Promise((r) => setTimeout(r, 60));
+    const mainsBefore = mainCalls(Plotly).length;
+    const relayoutsBefore = Plotly.relayout.mock.calls.length;
+    const resizesBefore = Plotly.Plots.resize.mock.calls.length;
+
+    document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
+      new Event('click', { bubbles: true }),
+    );
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mainCalls(Plotly).length).toBe(mainsBefore);
+    expect(Plotly.relayout.mock.calls.length).toBe(relayoutsBefore);
+    // Resize reaches both layers via Plots.resize (no camera reset).
+    await vi.waitFor(() => expect(Plotly.Plots.resize.mock.calls.length).toBeGreaterThan(resizesBefore));
+
+    document.getElementById('frontier-only').checked = true;
+    document.getElementById('frontier-only').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(mainsBefore + 1));
+    expect(lastCamera(Plotly)).toEqual(USER_CAMERA);
+  });
+});
+
+describe('estimate markers stay round', () => {
+  // Behavioral contract change: all estimate points use the same round
+  // markers as measured models (lab color + trace label + hover carry the
+  // meaning). Distinct glyphs (diamond/square/cross/x) are removed.
+  const DEALS_FIXTURE = FIXTURE
+    .replace(
+      '<input id="frontier-only" type="checkbox" />',
+      `<input id="frontier-only" type="checkbox" />
+<input id="deals-toggle" type="checkbox" />
+<input id="deals-util" type="number" value="100" />
+<p id="deals-note"></p>`,
+    )
+    .replace(
+      '<th data-key="cost">Cost</th>',
+      '<th data-key="cost">Cost</th><th data-key="deal">Terms</th>',
+    );
+
+  const DEALS_PAYLOAD = {
+    source_url: 'https://example.test/upstream.json',
+    source_updated: '2026-09-23',
+    fetched_at: '2026-09-23T00:00:00+00:00',
+    eras: [{ index: 1, label: 'v4.3 (current)', note: 'current note' }],
+    models: [
+      { id: 'muse-spark-1-3-xhigh', name: 'Muse Spark 1.3 (xhigh)', creator: 'Meta', release: '2026-08-01', iq: 45.1, cost: 1.367794, retired: false, open: false, era: 1, time_sec: 227.56, tps: 237.4, ttft: 0.5 },
+      { id: 'glm-5-3-flash', name: 'GLM 5.3 Flash', creator: 'Z AI', release: '2026-09-01', iq: 41.8, cost: 0.25326, retired: false, open: false, era: 1, time_sec: 992.84, tps: 50.9, ttft: 0.4 },
+      { id: 'claude-opus-5-xhigh', name: 'Claude Opus 5 (xhigh)', creator: 'Anthropic', release: '2026-08-01', iq: 49.7, cost: 4.8, retired: false, open: false, era: 1, time_sec: 100, tps: 60, ttft: 0.5 },
+      { id: 'gpt-5-5-high', name: 'GPT-5.5 (high)', creator: 'OpenAI', release: '2026-08-01', iq: 37, cost: 1.4, retired: false, open: false, era: 1, time_sec: 50, tps: 120, ttft: 0.4 },
+      { id: 'gemini-3-8-flash-high', name: 'Gemini 3.8 Flash (high)', creator: 'Google', release: '2026-08-01', iq: 40.9, cost: 1.2, retired: false, open: false, era: 1, time_sec: 70, tps: 90, ttft: 0.3 },
+    ],
+  };
+
+  function mainData(Plotly) {
+    const chart = document.getElementById('chart');
+    const calls = Plotly.react.mock.calls.filter((c) => c[0] === chart);
+    return calls.at(-1)?.[1] ?? [];
+  }
+
+  it('uses round markers for Contributor and subscription estimates', async () => {
+    document.body.innerHTML = DEALS_FIXTURE;
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => DEALS_PAYLOAD });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalled());
+
+    document.getElementById('deals-toggle').checked = true;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => {
+      const data = mainData(Plotly);
+      expect(data.some((t) => t.name === 'Go quota-equiv est.')).toBe(true);
+    });
+
+    const data = mainData(Plotly);
+    const models = data.find((t) => t.name === 'Models');
+    const estimates = data.filter((t) => t.type === 'scatter3d' && t.name !== 'Models' && t.name !== 'Pareto frontier');
+
+    expect(estimates.length).toBeGreaterThan(0);
+    for (const t of estimates) {
+      expect(t.marker?.symbol).toBeUndefined();
+      expect(t.marker?.size).toBe(models.marker?.size);
+      expect(t.marker?.color).toBeDefined();
+      expect(t.text.join('\n')).toContain('not an Artificial Analysis measurement');
+    }
+  });
+});
+
+describe('preferred-corner overlay outside the pick scene', () => {
+  // Behavioral contract: the green box never lives in the main gl3d pick
+  // scene. Main traces are scatter-only; the box renders in a separate
+  // pointer-events:none Plotly layer with the same camera/ranges, so dots
+  // always hover without any private pick patch.
+  function mainCalls(Plotly) {
+    const chart = document.getElementById('chart');
+    return Plotly.react.mock.calls.filter((c) => c[0] === chart);
+  }
+
+  function boxLayer() {
+    return document.getElementById('chart-box');
+  }
+
+  function boxCalls(Plotly) {
+    const box = boxLayer();
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
+  it('keeps main traces scatter-only and renders the box in a non-interactive layer', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBeGreaterThan(0));
+
+    const mainData = mainCalls(Plotly).at(-1)[1];
+    expect(mainData.some((t) => t.type === 'mesh3d')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Preferred corner')).toBe(false);
+    expect(mainData.some((t) => t.name === 'Models' && t.type === 'scatter3d')).toBe(true);
+
+    const box = boxLayer();
+    expect(box).not.toBeNull();
+    expect(box.style.pointerEvents).toBe('none');
+
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBeGreaterThan(0));
+    const overlayData = boxCalls(Plotly).at(-1)[1];
+    const corner = overlayData.find((t) => t.name === 'Preferred corner');
+    expect(corner).toMatchObject({ type: 'mesh3d', opacity: 0.15 });
+    expect(Math.min(...corner.x)).toBe(0.5);
+    expect(Math.max(...corner.z)).toBe(50);
+  });
+
+  it('hides the overlay box when the era range collapses, keeping main scatter', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...PAYLOAD,
+        models: [
+          { id: 'solo', name: 'Solo', creator: 'Acme', release: '2026-01-01', iq: 40, cost: 0.5, retired: false, open: true, era: 1, time_sec: 10, tps: 100, ttft: 0.5 },
+        ],
+      }),
+    });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBeGreaterThan(0));
+
+    expect(mainCalls(Plotly).at(-1)[1].some((t) => t.name === 'Models')).toBe(true);
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBeGreaterThan(0));
+    expect(boxCalls(Plotly).at(-1)[1]).toEqual([]);
+  });
+
+  it('syncs overlay camera, ranges and aspect with main across drag, filter, reset and resize', async () => {
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => { handlers[name] = fn; };
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBeGreaterThan(0));
+
+    const userCam = {
+      eye: { x: 0.3, y: 0.5, z: 2.1 },
+      center: { x: 0.05, y: 0.02, z: -0.03 },
+      up: { x: 0, y: 0, z: 1 },
+      projection: { type: 'perspective' },
+    };
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(userCam)) });
+    // Let the throttled overlay camera sync fire.
+    await vi.waitFor(() => {
+      const rel = Plotly.relayout.mock.calls.filter((c) => c[0] === boxLayer());
+      expect(rel.length).toBeGreaterThan(0);
+    });
+
+    const search = document.getElementById('search');
+    search.value = 'alpha';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(2));
+
+    const mainLayout = mainCalls(Plotly).at(-1)[2];
+    const boxLayout = boxCalls(Plotly).at(-1)[2];
+    expect(mainLayout.scene.camera).toEqual(userCam);
+    expect(boxLayout.scene.camera).toEqual(userCam);
+    expect(boxLayout.scene.xaxis.range).toEqual(mainLayout.scene.xaxis.range);
+    expect(boxLayout.scene.yaxis.range).toEqual(mainLayout.scene.yaxis.range);
+    expect(boxLayout.scene.zaxis.range).toEqual(mainLayout.scene.zaxis.range);
+    expect(boxLayout.scene.aspectmode).toBe(mainLayout.scene.aspectmode);
+
+    document.getElementById('reset-camera').dispatchEvent(new Event('click', { bubbles: true }));
+    await vi.waitFor(() => {
+      const mains = Plotly.relayout.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+      const boxes = Plotly.relayout.mock.calls.filter((c) => c[0] === boxLayer());
+      expect(mains.length).toBeGreaterThan(0);
+      expect(boxes.length).toBeGreaterThan(0);
+    });
+
+    const beforeResize = Plotly.Plots.resize.mock.calls.length;
+    window.dispatchEvent(new Event('resize'));
+    await vi.waitFor(() => expect(Plotly.Plots.resize.mock.calls.length).toBeGreaterThan(beforeResize));
+    const resizedDivs = Plotly.Plots.resize.mock.calls.slice(beforeResize).map((c) => c[0]);
+    expect(resizedDivs).toContain(document.getElementById('chart'));
+    expect(resizedDivs).toContain(boxLayer());
+  });
+
+  it('reapplies the latest camera when a drag lands mid-react without loops', async () => {
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => { handlers[name] = fn; };
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    const realReact = Plotly.react.getMockImplementation() ?? Plotly.react;
+
+    let releaseFirst;
+    const gate = new Promise((resolve) => { releaseFirst = resolve; });
+    let first = true;
+    Plotly.react.mockImplementation((...args) => {
+      if (first) {
+        first = false;
+        return gate.then(() => realReact(...args));
+      }
+      return realReact(...args);
+    });
+
+    await import('./main.js');
+    // First render (newPlot + initial react) is gated; start a filter render
+    // while it is still in flight, then drag mid-flight.
+    const initialCalls = () => mainCalls(Plotly).length;
+    releaseFirst();
+    await vi.waitFor(() => expect(initialCalls()).toBeGreaterThan(0));
+
+    // Start a second render and drag before it resolves.
+    let releaseSecond;
+    const gate2 = new Promise((resolve) => { releaseSecond = resolve; });
+    let second = true;
+    const prevImpl = Plotly.react.getMockImplementation();
+    Plotly.react.mockImplementation((...args) => {
+      if (second && args[0] === document.getElementById('chart')) {
+        second = false;
+        return gate2.then(() => realReact(...args));
+      }
+      return prevImpl(...args);
+    });
+    document.getElementById('frontier-only').checked = true;
+    document.getElementById('frontier-only').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(Plotly.react.mock.calls.length).toBeGreaterThan(1));
+
+    const lateCam = {
+      eye: { x: 0.9, y: -0.4, z: 1.8 },
+      center: { x: 0, y: 0, z: 0 },
+      up: { x: 0, y: 0, z: 1 },
+      projection: { type: 'perspective' },
+    };
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(lateCam)) });
+    releaseSecond();
+    await vi.waitFor(() => {
+      const rel = Plotly.relayout.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+      expect(rel.length).toBeGreaterThan(0);
+    });
+
+    const lastRel = Plotly.relayout.mock.calls.filter((c) => c[0] === document.getElementById('chart')).at(-1)[1];
+    expect(lastRel['scene.camera']).toEqual(lateCam);
+    // No event loop: camera handler only stores, never triggers react.
+    const reactsAfter = Plotly.react.mock.calls.length;
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(lateCam)) });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(Plotly.react.mock.calls.length).toBe(reactsAfter);
+  });
+});
+
+describe('overlay pointer isolation and geometry', () => {
+  // Follow-up hardening: parent pointer-events:none alone loses when a
+  // Plotly child sets pointer-events:auto. The guard must cascade with
+  // !important, stay out of tab order, share the exact drawable box via
+  // wrapper chrome, and keep the tooltip above without a chart stacking
+  // context. Responsive heights must match exactly on desktop and mobile.
+  async function cssText() {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    return fs.readFile(path.join(process.cwd(), 'src/style.css'), 'utf8');
+  }
+
+  function injectStyles(css) {
+    const el = document.createElement('style');
+    el.setAttribute('data-test-overlay-css', '1');
+    el.textContent = css;
+    document.head.appendChild(el);
+    return el;
+  }
+
+  it('forces pointer-events none on overlay descendants even when a child requests auto', async () => {
+    const css = await cssText();
+    // Guard inspects the stylesheet: combined selector with !important.
+    expect(css).toMatch(/\.chart-box-overlay\s*,\s*\.chart-box-overlay\s*\*\s*\{[^}]*pointer-events\s*:\s*none\s*!important/s);
+    injectStyles(css);
+
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    await import('./main.js');
+    await vi.waitFor(() => expect(document.getElementById('chart-box')).not.toBeNull());
+
+    const box = document.getElementById('chart-box');
+    expect(box.style.pointerEvents).toBe('none');
+    // Simulated Plotly child explicitly opting into hits still loses.
+    const child = document.createElement('div');
+    child.style.pointerEvents = 'auto';
+    box.appendChild(child);
+    expect(window.getComputedStyle(child).pointerEvents).toBe('none');
+    child.remove();
+  });
+
+  it('keeps the overlay out of tab order and silent with the modebar disabled', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    await import('./main.js');
+    await vi.waitFor(() => expect(document.getElementById('chart-box')).not.toBeNull());
+
+    const box = document.getElementById('chart-box');
+    expect(box.getAttribute('aria-hidden')).toBe('true');
+    // inert removes the subtree from focus; tabindex -1 covers no-inert runtimes.
+    expect(box.hasAttribute('inert') || box.tabIndex === -1).toBe(true);
+    const focusables = [...box.querySelectorAll('a, button, [tabindex]')].filter(
+      (el) => el.tabIndex >= 0,
+    );
+    expect(focusables).toEqual([]);
+    expect(box.querySelector('.modebar')).toBeNull();
+    const boxReact = Plotly.react.mock.calls.filter((c) => c[0] === box).at(-1);
+    expect(boxReact?.[3]).toMatchObject({ displayModeBar: false });
+  });
+
+  it('shares the exact drawable box via wrapper chrome with matching responsive heights', async () => {
+    const css = await cssText();
+    // Chrome lives on the shared wrapper so chart content and overlay
+    // content boxes coincide (no 2px border offset); overlay is inset 0.
+    expect(css).toMatch(/\.chart-wrap\s*\{[^}]*border\s*:\s*1px[^}]*overflow\s*:\s*hidden/s);
+    expect(css).toMatch(/\.chart-wrap\s*\{[^}]*background\s*:\s*var\(--panel\)/s);
+    expect(css).toMatch(/\.chart\s*\{[^}]*border\s*:\s*0/s);
+    expect(css).toMatch(/\.chart-box-overlay\s*\{[^}]*inset\s*:\s*0/s);
+    // Desktop heights match; mobile media sets the wrapper (chart follows
+    // at 100%) so they cannot drift apart.
+    expect(css).toMatch(/\.chart-wrap\s*\{[^}]*height\s*:\s*min\(72vh,\s*640px\)/s);
+    expect(css).toMatch(/@media[^{]*max-width\s*:\s*640px[\s\S]*\.chart-wrap\s*\{[^}]*height\s*:\s*70vh/s);
+    expect(css).toMatch(/@media[^{]*max-width\s*:\s*640px[\s\S]*\.chart-wrap\s+\.chart\s*\{[^}]*height\s*:\s*100%/s);
+
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    await import('./main.js');
+    await vi.waitFor(() => expect(document.getElementById('chart-box')).not.toBeNull());
+    const wrap = document.getElementById('chart').parentElement;
+    expect(wrap?.dataset?.chartWrap).toBe('1');
+    expect(wrap.contains(document.getElementById('chart'))).toBe(true);
+    expect(wrap.contains(document.getElementById('chart-box'))).toBe(true);
+  });
+
+  it('stacks the tooltip above the overlay without a chart stacking context', async () => {
+    const css = await cssText();
+    // No z-index on .chart: a positioned+z-index chart would trap the
+    // tooltip (z10) inside its stacking context behind the overlay (z2).
+    expect(css).not.toMatch(/\.chart\s*\{[^}]*z-index/s);
+    const overlayZ = Number((css.match(/\.chart-box-overlay\s*\{[^}]*z-index\s*:\s*(\d+)/s) ?? [])[1]);
+    const tipZ = Number((css.match(/\.chart-hover-tooltip\s*\{[^}]*z-index\s*:\s*(\d+)/s) ?? [])[1]);
+    expect(Number.isFinite(overlayZ) && Number.isFinite(tipZ)).toBe(true);
+    expect(tipZ).toBeGreaterThan(overlayZ);
+
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    await import('./main.js');
+    await vi.waitFor(() => expect(document.getElementById('chart-hover-tooltip')).not.toBeNull());
+    const tip = document.getElementById('chart-hover-tooltip');
+    const wrap = document.getElementById('chart').parentElement;
+    // Hosted in the wrapper (not inside .chart) so z10 outranks overlay z2
+    // in the same stacking context; main canvas keeps pointer via inherit.
+    expect(tip.parentElement).toBe(wrap);
+    expect(tip.style.pointerEvents).toBe('none');
   });
 });

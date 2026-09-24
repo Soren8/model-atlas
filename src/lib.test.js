@@ -4,8 +4,7 @@ import {
   preferredCornerBounds,
   filterModels,
   resolveDataUrl,
-  makeTraceUnpickable,
-  disablePreferredBoxPick,
+  PREFERRED_CORNER_NAME,
   PROVIDER_COLORS,
   PROVIDER_FALLBACK_COLOR,
   buildProviderColors,
@@ -293,93 +292,31 @@ describe('filterModels', () => {
   });
 });
 
-describe('preferred corner picking', () => {
-  function fakeBoxTrace() {
-    const mesh = {
-      pickId: 7,
-      pickSlots: 1,
-      drawCalls: 0,
-      draw() {},
-      drawPick() {
-        this.drawCalls += 1;
-      },
-      pick(result) {
-        if (!result || result.id !== this.pickId) return null;
-        return { index: 0, dataCoordinate: [1, 2, 3] };
-      },
-    };
-    return {
-      data: { name: 'Preferred corner', type: 'mesh3d', hoverinfo: 'skip' },
-      mesh,
-      handlePick(selection) {
-        return selection?.object === this.mesh;
-      },
-    };
-  }
-
-  function fakeScatterTrace() {
-    const scatterPlot = {
-      highlightCalls: 0,
-      highlight() {
-        this.highlightCalls += 1;
-      },
-    };
-    return {
-      data: { name: 'Models', type: 'scatter3d', hoverinfo: 'text' },
-      scatterPlot,
-      handlePick(selection) {
-        return selection?.object === this.scatterPlot;
-      },
-    };
-  }
-
-  it('makes the highlight box unpickable while scatter points stay hoverable', () => {
-    const box = fakeBoxTrace();
-    const scatter = fakeScatterTrace();
-
-    // Cursor over a model dot seen through the box volume: the shared
-    // gl-plot3d pick buffer reports the frontmost surface (the box), so the
-    // scatter handler never matches and the dot loses its hover.
-    const occluded = { object: box.mesh, data: { index: 0 } };
-
-    expect(scatter.handlePick(occluded)).toBe(false);
-    expect(box.handlePick(occluded)).toBe(true);
-
-    const patched = makeTraceUnpickable(box);
-
-    expect(patched).toBe(true);
-    // Not rendered into the pick buffer anymore, so the dot behind shows
-    // through; never claims a pick even if handed one.
-    box.mesh.drawPick();
-    expect(box.mesh.drawCalls).toBe(0);
-    expect(box.mesh.pick({ id: 7, value: [0, 0, 0] })).toBeNull();
-    expect(box.handlePick({ object: box.mesh })).toBe(false);
-    // Model hover still resolves: the scatter object matches its own picks.
-    expect(scatter.handlePick({ object: scatter.scatterPlot })).toBe(true);
+describe('preferred corner overlay contract (no private pick patch)', () => {
+  // Behavioral contract change: the green box never shares the main gl3d
+  // pick scene. It renders in a separate pointer-events:none Plotly layer,
+  // so lib exposes no private drawPick/pick hooks. Main traces stay
+  // scatter-only; dots hover without patching.
+  it('names the overlay box trace for the separate layer', () => {
+    expect(PREFERRED_CORNER_NAME).toBe('Preferred corner');
   });
 
-  it('patches only the preferred-corner mesh and leaves camera and scatter alone', () => {
-    const box = fakeBoxTrace();
-    const scatter = fakeScatterTrace();
-    const camera = { eye: { x: 1.7, y: -1.5, z: 0.9 } };
-    const scene = { traces: { uidBox: box, uidScatter: scatter }, camera };
-    const chartDiv = { _fullLayout: { scene: { _scene: scene } } };
-    const scatterPick = scatter.handlePick;
-    const scatterMeshRef = scatter.scatterPlot;
+  it('exposes no private Plotly pick-buffer hooks', async () => {
+    const lib = await import('./lib.js');
 
-    const count = disablePreferredBoxPick(chartDiv);
-
-    expect(count).toBe(1);
-    expect(box.mesh.pickSlots).toBe(0);
-    expect(typeof box.mesh.draw).toBe('function');
-    expect(scene.camera).toBe(camera);
-    expect(scatter.scatterPlot).toBe(scatterMeshRef);
-    expect(scatter.handlePick).toBe(scatterPick);
+    expect(lib.makeTraceUnpickable).toBeUndefined();
+    expect(lib.disablePreferredBoxPick).toBeUndefined();
+    expect(String(Object.keys(lib))).not.toMatch(/drawPick|pickSlots|_fullLayout/);
   });
 
-  it('ignores charts without a gl scene instead of throwing', () => {
-    expect(disablePreferredBoxPick({})).toBe(0);
-    expect(disablePreferredBoxPick(null)).toBe(0);
+  it('still computes overlay bounds reaching the era ceiling for the layer', () => {
+    const plotted = [
+      model({ id: 'lo', cost: 1, time_sec: 4, iq: 20 }),
+      model({ id: 'mid', cost: 4, time_sec: 16, iq: 40 }),
+    ];
+
+    expect(preferredCornerBounds(plotted, 'time', 50).z).toEqual([30, 50]);
+    expect(preferredCornerBounds([], 'time')).toBeNull();
   });
 });
 

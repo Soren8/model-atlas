@@ -803,58 +803,7 @@ export function resolveDataUrl(base) {
   return new URL('data/models.json', base).href;
 }
 
-/** Trace name of the translucent preferred-corner highlight box. */
+/** Trace name of the translucent preferred-corner highlight box. The box
+ * renders in a separate pointer-events:none Plotly layer (never in the main
+ * gl3d pick scene), so no pick-buffer patching is needed. */
 export const PREFERRED_CORNER_NAME = 'Preferred corner';
-
-/**
- * Exclude the mesh from Plotly's depth-tested pick buffer without changing
- * its visible rendering. `hoverinfo: 'skip'` suppresses labels but still
- * occludes model picking. Plotly exposes no public pick-disable flag;
- * recheck these private hooks when upgrading plotly.js-gl3d-dist.
- */
-export function makeTraceUnpickable(trace) {
-  if (!trace || typeof trace !== 'object') return false;
-  const mesh = trace.mesh;
-  if (!mesh || typeof mesh.drawPick !== 'function' || typeof mesh.pick !== 'function') {
-    return false;
-  }
-  try {
-    mesh.drawPick = () => {};
-    mesh.pick = () => null;
-    mesh.pickSlots = 0;
-    mesh.__preferredCornerUnpickable = true;
-    trace.handlePick = () => false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Remove the preferred-corner highlight from gl3d picking on a plotted
- * chart div (`gd._fullLayout.scene._scene.traces`, plus any extra
- * `sceneN` subplots). Safe to call when WebGL is unavailable or the box
- * is absent: returns how many box traces were patched (0 or more) and
- * never throws, so camera interactions are unaffected. Call after every
- * `Plotly.react` because traces are recreated when the box appears.
- */
-export function disablePreferredBoxPick(chartDiv) {
-  try {
-    const fullLayout = chartDiv?._fullLayout;
-    if (!fullLayout || typeof fullLayout !== 'object') return 0;
-    let patched = 0;
-    for (const key of Object.keys(fullLayout)) {
-      const scene = fullLayout[key]?._scene;
-      const traces = scene?.traces;
-      if (!traces || typeof traces !== 'object') continue;
-      for (const uid of Object.keys(traces)) {
-        const trace = traces[uid];
-        if (trace?.data?.name !== PREFERRED_CORNER_NAME) continue;
-        if (makeTraceUnpickable(trace)) patched += 1;
-      }
-    }
-    return patched;
-  } catch {
-    return 0;
-  }
-}

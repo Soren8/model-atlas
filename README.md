@@ -84,9 +84,16 @@ readable by the unprivileged nginx process.
   intelligence, top at the fixed era ceiling) — a static guide, not an
   optimum; hidden when the domain collapses or nothing is plottable, so
   empty states stay accurate.
-  It renders at 15% opacity and never intercepts model hover (excluded from
-  the 3D pick buffer, so dots hover through it).
+  It renders at 15% opacity in a separate transparent Plotly layer with
+  `pointer-events: none` (no axes/grids/labels/modebar); the main plot holds
+  scatter points only, so the box can never occlude picks and dots always
+  hover. Both layers share the same camera, ranges, margins and cube aspect,
+  synced on rotate/pan/zoom, reset, filtering, empty states and resize via
+  public react/relayout/resize only — no private pick patching.
 - The intelligence axis tops out at the highest score in the selected era, holding steady across search, provider, and frontier filters.
+- Camera is sticky: rotate/zoom/pan persists across search, provider,
+  open/retired, frontier, subscription, utilization, speed, era, sorting,
+  resize and empty states; only Reset camera restores the default view.
 - The Intelligence Index is one aggregate — models with equal scores can differ
   per task — and the evaluation suite is reasoning-heavy, so chat workloads
   scale differently. See the
@@ -112,8 +119,8 @@ Muse Spark 1.3 (xhigh) and 1.2 (xhigh) only — `(max)` is Standard-only and
 stays measured-only.
 
 The **Subscription estimates** toggle (off by default) adds subscription
-estimates in separate per-offer traces (same provider colors, distinct marker
-per offer), including compounded Contributor-via-Go for the Muse Spark
+estimates in separate per-offer traces (same provider colors, same round
+markers as measured points; trace label + hover carry the offer), including compounded Contributor-via-Go for the Muse Spark
 Contributor rows. Scenario cost is always
 `measured ÷ (multiplier × use)` at your quota/workload-use %; scenario
 intelligence/speed are inherited benchmark proxies, never provider-measured.

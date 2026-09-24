@@ -9,7 +9,7 @@ import {
   formatUsd,
   formatNum,
   resolveDataUrl,
-  disablePreferredBoxPick,
+  PREFERRED_CORNER_NAME,
   buildContributorPoints,
   buildSubscriptionPoints,
   dealLabel,
@@ -29,6 +29,83 @@ import {
 import { DEALS_REVIEWED } from './deals.js';
 
 const DEFAULT_CAMERA = { eye: { x: 1.7, y: -1.5, z: 0.9 } };
+
+// Persistent user camera: `uirevision: 'keep-camera'` alone cannot preserve
+// gl3d orientation here because every react supplies an explicit partial
+// `scene.camera` (eye only). The Plotly `_preGUI` mechanism only restores
+// leaf keys present before the drag (eye.*), so pan (center), tilt (up) and
+// projection are lost, and recreating the scene for empty views drops even
+// the eye. Instead track the full camera from the public `plotly_relayout` /
+// `plotly_relayouting` events (full `scene.camera` on mouseup/wheel, partial
+// `scene.camera.eye.x`-style keys elsewhere) and replay it on every react
+// until explicit Reset. See plotly.js-gl3d-dist `scene.saveLayout` and
+// `applyUIRevisions` (`/^(scene\d*)\.camera/`).
+let storedCamera = null;
+let cameraWired = false;
+let renderSeq = 0;
+
+function cloneCamera(cam) {
+  return cam ? JSON.parse(JSON.stringify(cam)) : cam;
+}
+
+function isPlainCameraObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function camerasEqual(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function cameraForLayout() {
+  return cloneCamera(storedCamera ?? DEFAULT_CAMERA);
+}
+
+function applyCameraEvent(eventData) {
+  if (!eventData || typeof eventData !== 'object') return false;
+  let changed = false;
+  for (const key of Object.keys(eventData)) {
+    if (!/^scene\d*\.camera$/.test(key)) continue;
+    const full = eventData[key];
+    if (!isPlainCameraObject(full)) continue;
+    if (!isPlainCameraObject(storedCamera)) storedCamera = cloneCamera(DEFAULT_CAMERA);
+    for (const k of Object.keys(full)) storedCamera[k] = cloneCamera(full[k]);
+    changed = true;
+  }
+  for (const key of Object.keys(eventData)) {
+    if (/^scene\d*\.camera$/.test(key)) continue;
+    const m = key.match(/^scene\d*\.camera\.(.+)$/);
+    if (!m) continue;
+    const value = eventData[key];
+    if (value === null || value === undefined) continue;
+    if (!isPlainCameraObject(storedCamera)) storedCamera = cloneCamera(DEFAULT_CAMERA);
+    const parts = m[1].split('.');
+    let node = storedCamera;
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      if (!isPlainCameraObject(node[parts[i]])) node[parts[i]] = {};
+      node = node[parts[i]];
+    }
+    const leaf = parts[parts.length - 1];
+    if (isPlainCameraObject(value)) node[leaf] = cloneCamera(value);
+    else if (['number', 'string', 'boolean'].includes(typeof value)) node[leaf] = value;
+    else continue;
+    changed = true;
+  }
+  return changed;
+}
+
+function handleCameraEvent(eventData) {
+  if (!applyCameraEvent(eventData)) return;
+  scheduleBoxCameraSync();
+}
+
+function wireCamera() {
+  if (cameraWired) return;
+  cameraWired = true;
+  if (typeof els.chart.on === 'function') {
+    els.chart.on('plotly_relayout', handleCameraEvent);
+    els.chart.on('plotly_relayouting', handleCameraEvent);
+  }
+}
 
 const els = {
   chart: document.getElementById('chart'),
@@ -68,6 +145,207 @@ const state = {
   sortDir: -1,
   webgl: true,
 };
+
+// Preferred-corner overlay: the green box lives in its own transparent
+// Plotly gl3d layer stacked over the main chart with pointer-events:none,
+// so it can never enter the main pick scene or block dot hover. Both layers
+// share the exact camera, axis ranges, margins and cube aspect, synced via
+// the stored camera (drag/zoom/pan/reset) and every render
+// (search/deals/empty/resize). Only public Plotly newPlot/react/relayout/
+// resize are used; no private pick-buffer patching.
+let boxLayerDiv = null;
+let boxRaf = 0;
+
+function chartWrap() {
+  if (els.chart.parentElement?.dataset?.chartWrap === '1') return els.chart.parentElement;
+  return els.chart;
+}
+
+function ensureChartWrap() {
+  const parent = els.chart.parentElement;
+  if (parent?.dataset?.chartWrap === '1') return parent;
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.dataset.chartWrap = '1';
+  parent.insertBefore(wrap, els.chart);
+  wrap.appendChild(els.chart);
+  return wrap;
+}
+
+function ensureBoxLayer() {
+  if (boxLayerDiv?.isConnected) return boxLayerDiv;
+  const wrap = ensureChartWrap();
+  let box = wrap.querySelector('#chart-box');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'chart-box';
+    box.className = 'chart-box-overlay';
+    box.setAttribute('aria-hidden', 'true');
+    // Non-interactive layer: never tab-focusable, never announces.
+    // `inert` removes the whole subtree from tab order/focus; tabindex -1
+    // covers runtimes without inert support. Plotly children can set
+    // pointer-events:auto, so CSS forces `.chart-box-overlay *` off too.
+    try {
+      box.setAttribute('inert', '');
+    } catch {}
+    try {
+      box.tabIndex = -1;
+    } catch {}
+    box.style.pointerEvents = 'none';
+    wrap.appendChild(box);
+  } else {
+    box.classList.add('chart-box-overlay');
+    box.setAttribute('aria-hidden', 'true');
+    try {
+      box.setAttribute('inert', '');
+    } catch {}
+    try {
+      box.tabIndex = -1;
+    } catch {}
+    box.style.pointerEvents = 'none';
+  }
+  boxLayerDiv = box;
+  return box;
+}
+
+function hardenBoxLayer(box) {
+  if (!box) return;
+  try {
+    box.setAttribute('aria-hidden', 'true');
+  } catch {}
+  try {
+    box.setAttribute('inert', '');
+  } catch {}
+  try {
+    box.tabIndex = -1;
+  } catch {}
+  try {
+    box.style.pointerEvents = 'none';
+  } catch {}
+  // Plotly may inject modebar links/buttons even when disabled; keep them
+  // unfocusable and hidden so the overlay never takes tab focus.
+  try {
+    for (const el of box.querySelectorAll('a, button, [tabindex], .modebar')) {
+      try {
+        el.setAttribute('aria-hidden', 'true');
+      } catch {}
+      try {
+        el.tabIndex = -1;
+      } catch {}
+      if (el.classList?.contains('modebar')) {
+        try {
+          el.style.display = 'none';
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
+function boxLayout(zMax, xRange, yRange, camera) {
+  return {
+    autosize: true,
+    margin: { l: 0, r: 0, t: 30, b: 0 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    showlegend: false,
+    hovermode: false,
+    uirevision: 'keep-camera',
+    scene: {
+      camera: camera ?? cameraForLayout(),
+      // Explicit cube + 1:1:1 ratio on both layers so the overlay box
+      // aligns pixel-exact with the main scatter projection even if Plotly
+      // auto aspect would otherwise depend on trace data.
+      aspectmode: 'cube',
+      aspectratio: { x: 1, y: 1, z: 1 },
+      bgcolor: 'rgba(0,0,0,0)',
+      dragmode: false,
+      xaxis: {
+        title: { text: '' },
+        type: 'log',
+        visible: false,
+        showgrid: false,
+        zeroline: false,
+        showticklabels: false,
+        ticks: '',
+        showline: false,
+        ...(xRange === undefined ? {} : { range: xRange }),
+      },
+      yaxis: {
+        title: { text: '' },
+        type: 'log',
+        visible: false,
+        showgrid: false,
+        zeroline: false,
+        showticklabels: false,
+        ticks: '',
+        showline: false,
+        ...(yRange === undefined ? {} : { range: yRange }),
+      },
+      zaxis: {
+        title: { text: '' },
+        visible: false,
+        showgrid: false,
+        zeroline: false,
+        showticklabels: false,
+        ticks: '',
+        showline: false,
+        ...(zMax === undefined ? {} : { range: [0, zMax] }),
+      },
+    },
+  };
+}
+
+function boxTraceFor(domainPoints, speedMode, zCeiling) {
+  const trace = preferredCornerTrace(domainPoints, speedMode, zCeiling);
+  if (!trace) return null;
+  trace.showlegend = false;
+  return trace;
+}
+
+async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, cameraSnapshot, hasPoints) {
+  if (!state.webgl) return;
+  let boxDiv;
+  try {
+    boxDiv = ensureBoxLayer();
+  } catch {
+    return;
+  }
+  // Empty views show no misleading box; collapsed era ranges also yield no
+  // trace via preferredCornerBounds null. Ranges/camera still match main.
+  const trace = hasPoints ? boxTraceFor(domainPoints, speedMode, zMax) : null;
+  const data = trace ? [trace] : [];
+  const boxConfig = { responsive: true, displaylogo: false, displayModeBar: false };
+  try {
+    await Plotly.react(boxDiv, data, boxLayout(zMax, xRange, yRange, cameraSnapshot), boxConfig);
+    boxDiv.style.display = '';
+    hardenBoxLayer(boxDiv);
+  } catch {
+    // Overlay failure (e.g. no WebGL) must never disable primary hover:
+    // hide the layer and keep the main scatter interactive.
+    try {
+      boxDiv.style.display = 'none';
+    } catch {}
+  }
+}
+
+function syncBoxCameraNow() {
+  boxRaf = 0;
+  if (!state.webgl || !boxLayerDiv?.isConnected) return;
+  try {
+    const p = Plotly.relayout(boxLayerDiv, { 'scene.camera': cameraForLayout() });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch {}
+}
+
+function scheduleBoxCameraSync() {
+  if (!state.webgl || !boxLayerDiv?.isConnected) return;
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    if (boxRaf) return;
+    boxRaf = window.requestAnimationFrame(syncBoxCameraNow);
+    return;
+  }
+  syncBoxCameraNow();
+}
 
 function setStatus(msg, isError = false) {
   els.status.textContent = msg;
@@ -190,6 +468,10 @@ let hoverWired = false;
 
 function ensureHoverTooltip() {
   if (hoverTip && hoverTip.isConnected) return hoverTip;
+  // Host the card in the chart wrap (above the pointer-events:none box
+  // overlay) so the overlay never clips it; coordinates still match the
+  // chart rect because the wrap tightly contains the chart.
+  const host = chartWrap();
   hoverTip = document.getElementById('chart-hover-tooltip');
   if (!hoverTip) {
     hoverTip = document.createElement('div');
@@ -200,11 +482,12 @@ function ensureHoverTooltip() {
     hoverTip.setAttribute('aria-hidden', 'true');
     // Never intercepts hover; screen-reader users use the data table.
     hoverTip.style.pointerEvents = 'none';
-    els.chart.appendChild(hoverTip);
+    host.appendChild(hoverTip);
   } else {
     hoverTip.classList.add('chart-hover-tooltip', 'chart-hover-arrow');
     hoverTip.style.pointerEvents = 'none';
-    if (!hoverTip.dataset.placement) hoverTip.dataset.placement = 'bottom-right';
+    if (hoverTip.dataset.placement !== undefined && !hoverTip.dataset.placement) hoverTip.dataset.placement = 'bottom-right';
+    if (hoverTip.parentElement !== host) host.appendChild(hoverTip);
   }
   return hoverTip;
 }
@@ -281,7 +564,7 @@ function wireHoverTooltip() {
   }
 }
 
-function layout(zMax, subscriptionOn = false, xRange, yRange) {
+function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
   const mode = SPEED_MODES[state.speedMode];
   const yTitle =
     state.speedMode === 'time'
@@ -302,7 +585,12 @@ function layout(zMax, subscriptionOn = false, xRange, yRange) {
     legend: { x: 0, y: 1 },
     uirevision: 'keep-camera',
     scene: {
-      camera: DEFAULT_CAMERA,
+      camera: camera ?? cameraForLayout(),
+      // Cube aspect on both layers so the overlay box aligns pixel-exact
+      // with the main scatter projection; ranges still carry the grid.
+      // Explicit 1:1:1 ratio guards against auto aspect depending on data.
+      aspectmode: 'cube',
+      aspectratio: { x: 1, y: 1, z: 1 },
       xaxis: {
         // Plotly gl3d scene axes require the object form; a plain string
         // renders the literal axis name ("x"/"z").
@@ -336,7 +624,7 @@ function preferredCornerTrace(domainPoints, speedMode, zCeiling) {
   const [y0, y1] = bounds.y;
   const [z0, z1] = bounds.z;
   return {
-    name: 'Preferred corner',
+    name: PREFERRED_CORNER_NAME,
     type: 'mesh3d',
     x: [x0, x1, x1, x0, x0, x1, x1, x0],
     y: [y0, y0, y1, y1, y0, y0, y1, y1],
@@ -352,14 +640,15 @@ function preferredCornerTrace(domainPoints, speedMode, zCeiling) {
   };
 }
 
-function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
+function traces(shown, frontier, colors) {
   const frontierIds = new Set(frontier.map((m) => m.id));
   // Estimates stay in their own labeled traces even when they land on the
   // frontier, so measured points and estimates are never mixed. Contributor
   // (distinct token tariff) is separate from the subscription offers, and
-  // each subscription offer gets its own trace (distinct marker symbol, same
-  // provider colors) so billing offers are visually distinguishable under the
-  // single subscription toggle.
+  // each subscription offer gets its own trace (same lab colors, same round
+  // markers) so billing offers stay distinguishable by label/legend/hover
+  // under the single subscription toggle. All markers are round circles:
+  // no diamond/square/cross/x glyphs.
   const contributorShown = shown.filter((m) => m.deal?.kind === 'contributor');
   const goShown = shown.filter((m) => m.deal?.kind === 'go' || m.deal?.kind === 'contributor-go');
   const claudeMaxShown = shown.filter((m) => m.deal?.kind === 'claude-max');
@@ -369,8 +658,9 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
   const front = shown.filter((m) => !m.deal && frontierIds.has(m.id));
   const colorOf = (m) => colors.get(m.creator) ?? '#888';
 
-  // One estimate trace per billing offer: same lab colors, distinct symbols.
-  function estimateTrace(name, points, symbol) {
+  // One estimate trace per billing offer: same lab colors and same round
+  // size as the Models trace; the trace label + hover carry the meaning.
+  function estimateTrace(name, points) {
     return {
       name,
       type: 'scatter3d',
@@ -381,9 +671,8 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       text: points.map(hoverText),
       hoverinfo: 'none',
       marker: {
-        size: 5,
+        size: 4,
         opacity: 0.9,
-        symbol,
         color: points.map(colorOf),
         line: { color: '#ffffff', width: 1 },
       },
@@ -428,33 +717,30 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       },
     },
   ];
-  // The green box marks the full era domain (all measured rows plus
-  // eligible Contributor and Go estimates, including retired), not the
-  // filtered shown subset, so it stays fixed across
-  // search/provider/open/retired/frontier/subscription toggles and reaches
-  // the fixed intelligence ceiling.
-  const corner = preferredCornerTrace(domainForBox ?? shown, speedMode, zCeiling);
-  if (corner) data.push(corner);
+  // Main plot holds scatter only: the green box lives in the separate
+  // pointer-events:none overlay so it can never occlude picks.
   if (contributorShown.length) {
-    data.push(estimateTrace(CONTRIBUTOR_TRACE_NAME, contributorShown, 'diamond'));
+    data.push(estimateTrace(CONTRIBUTOR_TRACE_NAME, contributorShown));
   }
   if (goShown.length) {
-    data.push(estimateTrace(GO_TRACE_NAME, goShown, 'square'));
+    data.push(estimateTrace(GO_TRACE_NAME, goShown));
   }
   if (claudeMaxShown.length) {
-    data.push(estimateTrace(CLAUDE_MAX_TRACE_NAME, claudeMaxShown, 'cross'));
+    data.push(estimateTrace(CLAUDE_MAX_TRACE_NAME, claudeMaxShown));
   }
   if (codexShown.length) {
-    data.push(estimateTrace(CODEX_TRACE_NAME, codexShown, 'x'));
+    data.push(estimateTrace(CODEX_TRACE_NAME, codexShown));
   }
   if (cursorUltraShown.length) {
-    data.push(estimateTrace(CURSOR_ULTRA_TRACE_NAME, cursorUltraShown, 'diamond-open'));
+    data.push(estimateTrace(CURSOR_ULTRA_TRACE_NAME, cursorUltraShown));
   }
   return data;
 }
 
 async function render() {
   if (!state.payload) return;
+  const myRender = ++renderSeq;
+  const cameraSnapshot = cameraForLayout();
   // Filtering invalidates any visible hover card for a stale point.
   hideHoverTooltip();
   const eraModels = state.payload.models.filter((m) => m.era === state.era);
@@ -512,22 +798,23 @@ async function render() {
         : 'No models match the current filters. Loosen the search or provider selection.',
     );
     // Empty views keep the fixed era grid (no misleading box) so the empty
-    // state stays accurate while the axes do not rescale.
+    // state stays accurate while the axes do not rescale. Camera persists.
     lastTraceData = [];
-    await Plotly.react(els.chart, [], layout(zMax, state.dealsEnabled, xRange, yRange), { responsive: true, displaylogo: false });
-    disablePreferredBoxPick(els.chart);
+    await Plotly.react(els.chart, [], layout(zMax, state.dealsEnabled, xRange, yRange, cameraSnapshot), { responsive: true, displaylogo: false });
+    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, false);
   } else {
     setStatus('');
     try {
-      const traceData = traces(shown, frontier, colors, state.speedMode, zMax, domainForBox);
+      // Main plot holds scatter only; the green box is overlay-only so it
+      // can never occlude picks. The box still marks the full era domain
+      // (measured + eligible deals, including retired) and reaches the
+      // fixed intelligence ceiling.
+      const traceData = traces(shown, frontier, colors);
       lastTraceData = traceData;
-      await Plotly.react(els.chart, traceData, layout(zMax, state.dealsEnabled, xRange, yRange), {
+      await Plotly.react(els.chart, traceData, layout(zMax, state.dealsEnabled, xRange, yRange, cameraSnapshot), {
         responsive: true,
         displaylogo: false,
       });
-      // hoverinfo:'skip' alone still occludes dots in the shared gl-plot3d
-      // pick buffer; exclude the box there so model hover works through it.
-      disablePreferredBoxPick(els.chart);
     } catch (e) {
       state.webgl = false;
       els.chart.style.display = 'none';
@@ -535,7 +822,27 @@ async function render() {
         'Interactive 3D is unavailable in this browser (WebGL failed). The full data table below remains available.',
         true,
       );
+      return;
     }
+    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, true);
+  }
+  // A drag/reset during this async react would otherwise be overwritten by
+  // the stale snapshot. Re-apply the latest stored camera when this is still
+  // the newest render; the relayout echo carries the same value, so the
+  // camera handler stays idempotent and no loop occurs. Both layers move
+  // together; overlay failure never touches the main camera.
+  if (state.webgl && myRender === renderSeq && !camerasEqual(cameraSnapshot, storedCamera ?? DEFAULT_CAMERA)) {
+    try {
+      const latest = cameraForLayout();
+      const p = Plotly.relayout(els.chart, { 'scene.camera': latest });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
+    try {
+      if (boxLayerDiv?.isConnected) {
+        const p2 = Plotly.relayout(boxLayerDiv, { 'scene.camera': cameraForLayout() });
+        if (p2 && typeof p2.catch === 'function') p2.catch(() => {});
+      }
+    } catch {}
   }
 }
 
@@ -665,7 +972,19 @@ function wireControls() {
     render();
   });
   els.resetCamera.addEventListener('click', () => {
-    if (state.webgl) Plotly.relayout(els.chart, { 'scene.camera': DEFAULT_CAMERA });
+    storedCamera = cloneCamera(DEFAULT_CAMERA);
+    if (state.webgl) {
+      try {
+        const p = Plotly.relayout(els.chart, { 'scene.camera': cloneCamera(DEFAULT_CAMERA) });
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch {}
+      try {
+        if (boxLayerDiv?.isConnected) {
+          const p2 = Plotly.relayout(boxLayerDiv, { 'scene.camera': cloneCamera(DEFAULT_CAMERA) });
+          if (p2 && typeof p2.catch === 'function') p2.catch(() => {});
+        }
+      } catch {}
+    }
   });
   document.querySelectorAll('#model-table th').forEach((th) => {
     th.tabIndex = 0;
@@ -697,7 +1016,17 @@ function wireControls() {
     });
   });
   window.addEventListener('resize', () => {
-    if (state.webgl && state.payload) Plotly.Plots.resize(els.chart).catch(() => {});
+    if (!state.webgl || !state.payload) return;
+    try {
+      const p = Plotly.Plots.resize(els.chart);
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
+    try {
+      if (boxLayerDiv?.isConnected) {
+        const p2 = Plotly.Plots.resize(boxLayerDiv);
+        if (p2 && typeof p2.catch === 'function') p2.catch(() => {});
+      }
+    } catch {}
   });
 }
 
@@ -741,9 +1070,20 @@ async function init() {
   const fetched = (state.payload.fetched_at ?? '').slice(0, 10);
   els.asof.textContent = `source updated ${updated} · snapshot ${fetched}`;
   setStatus('');
+  // Wrap first so the hover card hosts above the pointer-events:none overlay
+  // and coordinates still match the chart rect (wrap tightly contains chart).
+  try {
+    ensureChartWrap();
+  } catch {}
   try {
     await Plotly.newPlot(els.chart, [], layout(), { responsive: true, displaylogo: false });
     wireHoverTooltip();
+    // Re-ensure the card lives in the wrap (above the overlay) after the
+    // wrap exists; coordinates still match the chart rect.
+    try {
+      ensureHoverTooltip();
+    } catch {}
+    wireCamera();
   } catch {
     state.webgl = false;
     els.chart.style.display = 'none';

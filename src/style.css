@@ -75,7 +75,8 @@ button:hover { border-color: var(--accent); }
 .buttons { justify-content: flex-end; }
 
 .chart-section { margin: 1rem 0 2rem; }
-.chart {
+.chart-wrap {
+  position: relative;
   width: 100%;
   height: min(72vh, 640px);
   min-height: 380px;
@@ -83,7 +84,37 @@ button:hover { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+}
+.chart {
+  width: 100%;
+  height: min(72vh, 640px);
+  min-height: 380px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
   position: relative;
+}
+.chart-wrap .chart {
+  height: 100%;
+  min-height: 0;
+}
+.chart-box-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+.chart-box-overlay,
+.chart-box-overlay * {
+  pointer-events: none !important;
+}
+.chart-box-overlay .modebar {
+  display: none !important;
 }
 .chart-hover-tooltip {
   position: absolute;
@@ -156,5 +187,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   main { padding: 0.75rem 1rem 2.5rem; }
   .control-group { min-width: 100%; }
   select[multiple] { width: 100%; }
+  .chart-wrap { height: 70vh; min-height: 320px; }
   .chart { height: 70vh; min-height: 320px; }
+  .chart-wrap .chart { height: 100%; min-height: 0; }
 }
