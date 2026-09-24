@@ -50,7 +50,15 @@ readable by the unprivileged nginx process.
   `ghcr.io/soren8/model-atlas:latest` plus a commit tag to GHCR using the
   built-in `GITHUB_TOKEN`. Make the container package public after its first
   publish so the VPS can pull it without credentials. Refresh commits also
-  trigger a new image build; the sibling `iac` repository deploys it.
+  trigger a new image build. After a successful publish, the workflow dispatches
+  `managed-repo-push` to `Soren8/iac` with the repository name and exact checked
+  out commit SHA, so the sibling repository can deploy it. This requires a
+  GitHub App installed on `iac`, with repository
+  permissions **Contents: read and write** (write is required for repository
+  dispatch). Configure the app's numeric ID as the `IAC_APP_ID` Actions
+  repository variable and its private key PEM as the `IAC_APP_PRIVATE_KEY`
+  Actions repository secret in `model-atlas`. If either credential or the App
+  installation is missing, dispatch fails rather than being silently skipped.
 
 - **Data refresh** (`.github/workflows/refresh.yml`): runs every 6 hours and on
   manual dispatch. It fetches the upstream JSON instead of rescraping

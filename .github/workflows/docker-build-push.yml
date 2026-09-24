@@ -53,3 +53,22 @@ jobs:
             ${{ steps.image.outputs.name }}:sha-${{ steps.revision.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Create iac dispatch token
+        id: iac-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.IAC_APP_ID }}
+          private-key: ${{ secrets.IAC_APP_PRIVATE_KEY }}
+          owner: Soren8
+          repositories: iac
+          permission-contents: write
+      - name: Dispatch deployment to iac
+        env:
+          GH_TOKEN: ${{ steps.iac-token.outputs.token }}
+          REVISION: ${{ steps.revision.outputs.sha }}
+        run: >-
+          gh api repos/Soren8/iac/dispatches
+          --method POST
+          --field event_type=managed-repo-push
+          --field "client_payload[repo]=Soren8/model-atlas"
+          --field "client_payload[sha]=$REVISION"
