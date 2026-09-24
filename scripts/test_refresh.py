@@ -111,6 +111,82 @@ class NormalizeTest(unittest.TestCase):
         self.assertIn("v4.1", labels[0])
 
 
+class HistBackfillTest(unittest.TestCase):
+    """Archived rows ship with null time_sec but carry dated measurements in
+    the upstream ``hist`` list. The snapshot backfills only a missing time
+    from the latest valid dated entry inside the model's own era."""
+
+    def test_backfills_missing_archive_time_from_latest_in_era_entry(self):
+        hist = [
+            ["2025-04-14", 0.063774, 14.8],
+            ["2026-07-07", 0.063774, 14.8, 32.8],
+            ["2026-08-21", 0.063774, 14.8, 37.4],
+            ["2026-08-26", 0.054862, 14.8],
+        ]
+        payload = refresh.normalize(
+            upstream(models=[row(era=0, time=None, tps=None, ttft=None,
+                                 hist=hist, cost=0.054862, iq=14.8)]))
+
+        m = payload["models"][0]
+        self.assertEqual(m["time_sec"], 37.4)
+        self.assertEqual(m["time_observed"], "2026-08-21")
+        # Throughput is never invented from history.
+        self.assertIsNone(m["tps"])
+        self.assertIsNone(m["ttft"])
+
+    def test_never_overwrites_a_measured_time(self):
+        hist = [["2026-08-21", 0.06, 14.8, 37.4]]
+        payload = refresh.normalize(
+            upstream(models=[row(era=0, time=12.5, hist=hist)]))
+
+        m = payload["models"][0]
+        self.assertEqual(m["time_sec"], 12.5)
+        self.assertIsNone(m.get("time_observed"))
+
+    def test_ignores_hist_times_outside_the_models_own_era(self):
+        # Era 1 starts at 2026-09-05 (lower inclusive): pre-boundary
+        # measurements must not leak into current-era rows, and post-boundary
+        # measurements must not leak into archive rows.
+        current = refresh.normalize(upstream(models=[
+            row(era=1, time=None,
+                hist=[["2026-07-31", 0.06, 42.1, 331.81]])]))
+        self.assertIsNone(current["models"][0]["time_sec"])
+        self.assertIsNone(current["models"][0].get("time_observed"))
+
+        archive = refresh.normalize(upstream(models=[
+            row(era=0, time=None,
+                hist=[["2026-09-07", 0.06, 42.1, 331.81]])]))
+        self.assertIsNone(archive["models"][0]["time_sec"])
+        self.assertIsNone(archive["models"][0].get("time_observed"))
+
+    def test_rejects_malformed_hist_entries(self):
+        hist = [
+            "not-a-row",
+            ["2026-08-21", 0.06, 14.8, 0],          # non-positive time
+            ["2026-08-22", 0.06, 14.8, -5.0],       # negative time
+            ["2026-08-23", 0.06, 14.8, "fast"],     # non-numeric time
+            ["not-a-date", 0.06, 14.8, 40.0],       # bad date
+            [None, 0.06, 14.8, 41.0],               # missing date
+            ["2026-08-24", 0.06, 14.8],             # no time element
+            ["2026-08-25", 0.06, 14.8, True],       # bool is not a time
+            ["2026-08-20", 0.06, 14.8, 33.0],       # latest *valid* entry
+        ]
+        payload = refresh.normalize(
+            upstream(models=[row(era=0, time=None, hist=hist)]))
+
+        m = payload["models"][0]
+        self.assertEqual(m["time_sec"], 33.0)
+        self.assertEqual(m["time_observed"], "2026-08-20")
+
+    def test_hist_zero_or_time_free_history_stays_null(self):
+        for hist in (0, [], [["2026-08-26", 0.05, 14.8]]):
+            payload = refresh.normalize(
+                upstream(models=[row(era=0, time=None, hist=hist)]))
+            m = payload["models"][0]
+            self.assertIsNone(m["time_sec"])
+            self.assertIsNone(m.get("time_observed"))
+
+
 class RefreshFileTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -73,9 +73,10 @@ export function paretoFrontier(models, speedMode = 'time') {
 
 /**
  * Bounds of the most desirable octant of the given point set: low cost,
- * high intelligence, fastest speed. Cost and speed use the geometric
- * midpoint (centered on the log axes); intelligence uses the arithmetic
- * midpoint. The desirable speed side follows the active metric (low time,
+ * high intelligence, fastest speed. Cost and speed use the scale midpoint —
+ * geometric (centered on log axes) when `logScale` is true, arithmetic when
+ * the axes are linear; intelligence always uses the arithmetic midpoint.
+ * The desirable speed side follows the active metric (low time,
  * high throughput). The box top (`z[1]`) extends to `zCeiling` — the layout
  * intelligence ceiling for the selected era — so the box always reaches the
  * axis top even when filters hide the smartest era model; a non-finite
@@ -86,7 +87,7 @@ export function paretoFrontier(models, speedMode = 'time') {
  * Returns `{ x, y, z }` bound pairs, or null when there is no plottable
  * span (empty input or any axis collapsed) so callers show no misleading box.
  */
-export function preferredCornerBounds(models, speedMode = 'time', zCeiling = undefined) {
+export function preferredCornerBounds(models, speedMode = 'time', zCeiling = undefined, logScale = true) {
   const mode = SPEED_MODES[speedMode] ?? SPEED_MODES.time;
   const pts = (models ?? []).filter(
     (m) => m.iq > 0 && m.cost > 0 && m[mode.key] != null && m[mode.key] > 0,
@@ -108,8 +109,8 @@ export function preferredCornerBounds(models, speedMode = 'time', zCeiling = und
     if (m.iq > maxIq) maxIq = m.iq;
   }
   if (!(maxCost > minCost && maxSpeed > minSpeed && maxIq > minIq)) return null;
-  const midCost = Math.sqrt(minCost * maxCost);
-  const midSpeed = Math.sqrt(minSpeed * maxSpeed);
+  const midCost = logScale ? Math.sqrt(minCost * maxCost) : (minCost + maxCost) / 2;
+  const midSpeed = logScale ? Math.sqrt(minSpeed * maxSpeed) : (minSpeed + maxSpeed) / 2;
   const midIq = (minIq + maxIq) / 2;
   if (
     !(midCost > minCost && midCost < maxCost && midSpeed > minSpeed &&
@@ -150,6 +151,25 @@ export function logAxisRange(min, max, { padFraction = 0.05, singletonPad = 0.5 
 }
 
 /**
+ * Plotly linear-axis range for a positive extent in raw units.
+ *
+ * Linear cost/speed axes always start at zero and pad beyond the maximum so
+ * markers at the extreme stay inside the grid instead of clipping on the
+ * edge; a singleton still spans zero through padding so the axis stays
+ * plottable. Returns undefined for a missing or non-positive maximum so
+ * callers fall back to Plotly autorange.
+ */
+export function linearAxisRange(min, max, { padFraction = 0.05 } = {}) {
+  if (!Number.isFinite(max) || !(max > 0)) return undefined;
+  let hi = max;
+  if (Number.isFinite(min) && min > hi) hi = min;
+  const pad = Number.isFinite(padFraction) && padFraction > 0 ? padFraction : 0.05;
+  const top = hi * (1 + pad);
+  if (!Number.isFinite(top) || !(top > 0)) return undefined;
+  return [0, top];
+}
+
+/**
  * Full era point set for stable axis domains: every measured row of the
  * selected era plus every eligible estimate for that era at the active
  * quota utilization (always-on Contributor repricings plus all eligible
@@ -167,9 +187,11 @@ export function eraDomainPoints(models, { era = null, utilization = 1, now = Dat
 }
 
 /**
- * Stable chart domains for one era/speed combination: log10 x/y ranges
+ * Stable chart domains for one era/speed/scale combination: x/y ranges
  * spanning the full era population (measured + eligible deals, including
  * retired rows) and the linear intelligence ceiling (highest era score).
+ * Cost and speed ranges are log10 units when `logScale` is true (default)
+ * and raw zero-based units otherwise; intelligence is always linear.
  * Speed ranges use only plottable points (valid active speed metric);
  * models missing speed still contribute to cost/intelligence. Missing
  * speed everywhere leaves `yRange`/`yBounds` undefined so callers keep
@@ -178,7 +200,7 @@ export function eraDomainPoints(models, { era = null, utilization = 1, now = Dat
  */
 export function eraChartDomains(
   models,
-  { era = null, speedMode = 'time', utilization = 1, now = Date.now() } = {},
+  { era = null, speedMode = 'time', utilization = 1, now = Date.now(), logScale = true } = {},
 ) {
   const mode = SPEED_MODES[speedMode] ?? SPEED_MODES.time;
   const all = eraDomainPoints(models, { era, utilization, now });
@@ -209,12 +231,13 @@ export function eraChartDomains(
   }
   const xBounds = hasCost ? [minCost, maxCost] : undefined;
   const yBounds = hasSpeed ? [minSpeed, maxSpeed] : undefined;
+  const axisRange = logScale ? logAxisRange : linearAxisRange;
   return {
     xBounds,
     yBounds,
     zMax: hasIq ? maxIq : undefined,
-    xRange: hasCost ? logAxisRange(minCost, maxCost) : undefined,
-    yRange: hasSpeed ? logAxisRange(minSpeed, maxSpeed) : undefined,
+    xRange: hasCost ? axisRange(minCost, maxCost) : undefined,
+    yRange: hasSpeed ? axisRange(minSpeed, maxSpeed) : undefined,
   };
 }
 
@@ -252,6 +275,36 @@ export function filterModels(models, opts = {}) {
     if (q && !`${m.name} ${m.creator}`.toLowerCase().includes(q)) return false;
     return true;
   });
+}
+
+/** Monthly plan fee at or above which a subscription estimate is a high tier. */
+export const HIGH_TIER_FEE_THRESHOLD_USD = 200;
+
+/**
+ * Monthly plan fee (USD/month) for a subscription estimate descriptor.
+ * Prefers the generic `deal.fee` metadata; Go quota-equiv descriptors
+ * (current and legacy without `fee`) bill at the $10/mo Go plan — the
+ * $30/$60 values are quota amounts, not fees. Returns undefined for
+ * measured rows, direct Contributor repricings and unknown shapes so they
+ * never count as high tiers.
+ */
+export function subscriptionMonthlyFee(deal) {
+  if (!deal || typeof deal !== 'object') return undefined;
+  if (Number.isFinite(deal.fee) && deal.fee > 0) return deal.fee;
+  if (deal.kind === 'go' || deal.kind === 'contributor-go') return GO_SUBSCRIPTION_USD;
+  return undefined;
+}
+
+/**
+ * Whether a subscription estimate descriptor belongs to a high-tier plan
+ * (`fee >= threshold`, default $200). Generic over monthly fee — never
+ * hardcoded plan names — so future fees classify the same way.
+ */
+export function isHighTierSubscription(deal, threshold = HIGH_TIER_FEE_THRESHOLD_USD) {
+  const fee = subscriptionMonthlyFee(deal);
+  if (!Number.isFinite(fee)) return false;
+  if (!Number.isFinite(threshold)) return false;
+  return fee >= threshold;
 }
 
 /** Trace name of the always-on direct Contributor estimate points. */
@@ -593,6 +646,7 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
         kind: 'go',
         goId: entry.goId,
         tier,
+        fee: GO_SUBSCRIPTION_USD,
         baseCost: base.cost,
         utilization: use,
         promoActive,
@@ -615,6 +669,7 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
         kind: 'contributor-go',
         goId: entry.goId,
         tier: entry.tier,
+        fee: GO_SUBSCRIPTION_USD,
         baseCost: base.cost,
         contributorCost,
         utilization: use,
@@ -716,12 +771,18 @@ export function buildContributorPoints(models, opts = {}) {
  * `kind: 'contributor-go'` plus the sourced `claude-max` / `codex` /
  * `cursor-ultra` scenarios). Shown only when the subscription toggle is on;
  * the cost axis/domain already contains them while off so enabling the toggle
- * never rescales.
+ * never rescales. With `excludeHighTiers`, plans with a monthly fee at or
+ * above `highFeeThreshold` (default $200) are omitted — Go stays because its
+ * monthly fee is $10 (the $30/$60 values are quota amounts, not fees).
+ * Domains always use the unfiltered set so the exclusion never rescales.
  */
 export function buildSubscriptionPoints(models, opts = {}) {
-  return buildDealPoints(models, opts).filter(
+  const { excludeHighTiers = false, highFeeThreshold = HIGH_TIER_FEE_THRESHOLD_USD, ...dealOpts } = opts;
+  const points = buildDealPoints(models, dealOpts).filter(
     (p) => p.deal && p.deal.kind !== 'contributor',
   );
+  if (!excludeHighTiers) return points;
+  return points.filter((p) => !isHighTierSubscription(p.deal, highFeeThreshold));
 }
 
 /** Sorted provider list with per-provider model counts. */

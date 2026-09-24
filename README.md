@@ -68,19 +68,23 @@ readable by the unprivileged nginx process.
   (default: current) and never mixes them.
 - The Pareto frontier is computed live in 3D over the filtered view
   (higher intelligence, lower cost, better speed); ties are kept together.
-- Axes stay fixed per era/speed view. Cost (log), speed (log) and
-  intelligence span the full selected-era population — every measured row
+- Axes stay fixed per era/speed/scale view. Cost and the active speed metric
+  span the full selected-era population — every measured row
   plus every eligible Contributor and subscription estimate at the active
   use, including retired models — computed before
   search/provider/open/retired/frontier/subscription filtering, so the grid
   never rescales while filtering. Toggling subscription estimates on/off does
   not rescale (Contributor plus all eligible subscription estimates are
-  always in the domain); only use, promo expiry, speed-metric switches (new units)
-  and era switches legitimately recompute. Log ranges use log10 with endpoint padding and
+  always in the domain); only use, promo expiry, speed-metric switches (new units),
+  scale switches (new units) and era switches legitimately recompute. Log ranges use log10 with endpoint padding and
   singleton expansion so all plottable points (including frontier extremes)
-  sit inside; eras with no speed measurements leave speed to autorange.
+  sit inside; linear ranges run zero through the padded max; eras with no speed measurements leave speed to autorange.
+- The **Log scale** checkbox (checked by default) switches cost and the
+  active speed axis between log and linear together; intelligence is always
+  linear. Axis titles name the active scale.
 - The green “Preferred corner” box marks the cheaper/faster/smarter octant of
-  the full era domain (log midpoint on cost and speed, mid-range on
+  the full era domain (scale midpoint on cost and speed — geometric on log
+  axes, arithmetic on linear — mid-range on
   intelligence, top at the fixed era ceiling) — a static guide, not an
   optimum; hidden when the domain collapses or nothing is plottable, so
   empty states stay accurate.
@@ -91,6 +95,17 @@ readable by the unprivileged nginx process.
   synced on rotate/pan/zoom, reset, filtering, empty states and resize via
   public react/relayout/resize only — no private pick patching.
 - The intelligence axis tops out at the highest score in the selected era, holding steady across search, provider, and frontier filters.
+- The provider filter opens on **All providers** (no filtering); single-click
+  any provider to filter, click again to release it — no ctrl key needed —
+  and All clears the filter. Several providers combine freely; switching eras
+  keeps valid picks and drops stale ones.
+- The archive era (v4.1, before 2026-09-05) plots historical speed: 33 of its
+  36 rows carry the latest in-era dated time measurement from the upstream
+  history (observation dates in hover/table; throughput was never recorded
+  there, so the throughput metric is disabled and the view falls back to
+  time). Those rows read retired today — current status, not historical
+  availability — so selecting the archive reveals them instead of hiding them.
+  Archived times are sparse and not synchronized to the snapshot date.
 - Camera is sticky: rotate/zoom/pan persists across search, provider,
   open/retired, frontier, subscription, utilization, speed, era, sorting,
   resize and empty states; only Reset camera restores the default view.
@@ -121,7 +136,12 @@ stays measured-only.
 The **Subscription estimates** toggle (off by default) adds subscription
 estimates in separate per-offer traces (same provider colors, same round
 markers as measured points; trace label + hover carry the offer), including compounded Contributor-via-Go for the Muse Spark
-Contributor rows. Scenario cost is always
+Contributor rows. The adjacent **Exclude $200+ tiers** checkbox (checked by
+default) hides $200/mo plans (Claude Max, Codex, Cursor Ultra) by monthly
+plan fee while keeping the $10/mo Go estimates (Go $30/$60 are quota
+amounts, not fees); uncheck to show all offers. Contributor stays always on.
+Axes and the green box still span all tiers, so the exclusion never rescales.
+Scenario cost is always
 `measured ÷ (multiplier × use)` at your quota/workload-use %; scenario
 intelligence/speed are inherited benchmark proxies, never provider-measured.
 Every scenario is an approximate, user-authorized **lab-wide workload

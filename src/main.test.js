@@ -1877,3 +1877,518 @@ describe('overlay pointer isolation and geometry', () => {
     expect(tip.style.pointerEvents).toBe('none');
   });
 });
+
+describe('exclude $200+ tiers', () => {
+  const EXCLUDE_FIXTURE = FIXTURE
+    .replace(
+      '<input id="frontier-only" type="checkbox" />',
+      `<input id="frontier-only" type="checkbox" />
+<input id="deals-toggle" type="checkbox" />
+<label><input id="deals-exclude-high" type="checkbox" checked /> Exclude $200+ tiers</label>
+<input id="deals-util" type="number" value="100" />
+<p id="deals-note"></p>`,
+    )
+    .replace(
+      '<th data-key="cost">Cost</th>',
+      '<th data-key="cost">Cost</th><th data-key="deal">Terms</th>',
+    );
+
+  const MIXED_PAYLOAD = {
+    source_url: 'https://example.test/upstream.json',
+    source_updated: '2026-09-23',
+    fetched_at: '2026-09-23T00:00:00+00:00',
+    eras: [{ index: 1, label: 'v4.3 (current)', note: 'current note' }],
+    models: [
+      { id: 'muse-spark-1-3-xhigh', name: 'Muse Spark 1.3 (xhigh)', creator: 'Meta', release: '2026-08-01', iq: 45.1, cost: 1.367794, retired: false, open: false, era: 1, time_sec: 227.56, tps: 237.4, ttft: 0.5 },
+      { id: 'glm-5-3-flash', name: 'GLM 5.3 Flash', creator: 'Z AI', release: '2026-09-01', iq: 41.8, cost: 0.25326, retired: false, open: false, era: 1, time_sec: 992.84, tps: 50.9, ttft: 0.4 },
+      { id: 'claude-opus-5-xhigh', name: 'Claude Opus 5 (xhigh)', creator: 'Anthropic', release: '2026-08-01', iq: 49.7, cost: 4.8, retired: false, open: false, era: 1, time_sec: 100, tps: 60, ttft: 0.5 },
+      { id: 'gpt-5-5-high', name: 'GPT-5.5 (high)', creator: 'OpenAI', release: '2026-08-01', iq: 37, cost: 1.4, retired: false, open: false, era: 1, time_sec: 50, tps: 120, ttft: 0.4 },
+      { id: 'gemini-3-8-flash-high', name: 'Gemini 3.8 Flash (high)', creator: 'Google', release: '2026-08-01', iq: 40.9, cost: 1.2, retired: false, open: false, era: 1, time_sec: 70, tps: 90, ttft: 0.3 },
+    ],
+  };
+
+  function mainCalls(Plotly) {
+    return Plotly.react.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+  }
+
+  function boxCalls(Plotly) {
+    const box = document.getElementById('chart-box');
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
+  function lastData(Plotly) {
+    return mainCalls(Plotly).at(-1)[1];
+  }
+
+  function lastLayout(Plotly) {
+    return mainCalls(Plotly).at(-1)[2];
+  }
+
+  function trace(Plotly, name) {
+    return lastData(Plotly).find((t) => t.name === name);
+  }
+
+  it('hides $200 plans by default while keeping Go and Contributor across chart, table, frontier and sort', async () => {
+    document.body.innerHTML = EXCLUDE_FIXTURE;
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MIXED_PAYLOAD });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    // Checkbox is adjacent, labeled exactly, and checked by default.
+    const exclude = document.getElementById('deals-exclude-high');
+    expect(exclude).not.toBeNull();
+    expect(exclude.checked).toBe(true);
+    expect(exclude.closest('label').textContent).toContain('Exclude $200+ tiers');
+    // Subscription stays off by default; Contributor is already on.
+    expect(trace(Plotly, 'Contributor (estimates)')).toBeDefined();
+    expect(trace(Plotly, 'Go quota-equiv est.')).toBeUndefined();
+
+    document.getElementById('deals-toggle').checked = true;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    // Lower-cost Go stays (direct Go $60 plus compounded Contributor-via-Go).
+    const go = trace(Plotly, 'Go quota-equiv est.');
+    expect(go).toBeDefined();
+    expect(go.x).toHaveLength(2);
+    expect(go.marker?.symbol).toBeUndefined();
+    // $200 plans stay hidden while the exclusion is checked.
+    expect(trace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
+    expect(trace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')).toBeUndefined();
+    expect(trace(Plotly, 'Cursor Ultra $200 ~2x est.')).toBeUndefined();
+    // Contributor always on is unaffected.
+    expect(trace(Plotly, 'Contributor (estimates)').x).toHaveLength(1);
+
+    const bodyText = document.getElementById('model-tbody').textContent;
+    expect(bodyText).toContain('Contributor est.');
+    expect(bodyText).toContain('Go $60 quota-equiv est.');
+    expect(bodyText).not.toContain('Claude Max $200');
+    expect(bodyText).not.toContain('ChatGPT Pro/Codex $200');
+    expect(bodyText).not.toContain('Cursor Ultra $200');
+    expect(document.getElementById('counts').textContent).toContain('subscription estimates');
+
+    // Table re-sort keeps the exclusion (no hidden $200 rows reappear).
+    document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
+      new Event('click', { bubbles: true }),
+    );
+    const sortedText = document.getElementById('model-tbody').textContent;
+    expect(sortedText).toContain('Go $60 quota-equiv est.');
+    expect(sortedText).not.toContain('Claude Max $200');
+    expect(sortedText).not.toContain('Cursor Ultra $200');
+    expect(mainCalls(Plotly).length).toBe(2);
+  });
+
+  it('shows all $200 plans when unchecked while grid, box and camera stay stable', async () => {
+    document.body.innerHTML = EXCLUDE_FIXTURE;
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => { handlers[name] = fn; };
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MIXED_PAYLOAD });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    document.getElementById('deals-toggle').checked = true;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(trace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
+
+    const userCam = {
+      eye: { x: 0.2, y: 0.4, z: 2.5 },
+      center: { x: 0.1, y: -0.2, z: 0.05 },
+      up: { x: 0, y: 0, z: 1 },
+      projection: { type: 'perspective' },
+    };
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(userCam)) });
+
+    const beforeRanges = {
+      x: lastLayout(Plotly).scene.xaxis.range,
+      y: lastLayout(Plotly).scene.yaxis.range,
+      z: lastLayout(Plotly).scene.zaxis.range,
+    };
+    const beforeBox = boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner');
+    // Domain already contains hidden $200 estimates, so the grid covers them.
+    expect(Math.log10(1.4 / 70)).toBeGreaterThanOrEqual(beforeRanges.x[0] - 1e-9);
+
+    document.getElementById('deals-exclude-high').checked = false;
+    document.getElementById('deals-exclude-high').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+
+    const claudeMax = trace(Plotly, 'Claude Max $200 ~40x est.');
+    const codex = trace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.');
+    const ultra = trace(Plotly, 'Cursor Ultra $200 ~2x est.');
+    expect(claudeMax).toBeDefined();
+    expect(codex).toBeDefined();
+    expect(ultra).toBeDefined();
+    expect(claudeMax.x).toHaveLength(1);
+    expect(claudeMax.x[0]).toBeCloseTo(4.8 / 40, 10);
+    expect(codex.x[0]).toBeCloseTo(1.4 / 70, 10);
+    expect(ultra.x).toHaveLength(3);
+    for (const t of [claudeMax, codex, ultra]) expect(t.marker?.symbol).toBeUndefined();
+    expect(claudeMax.marker.color).toEqual(['#cc785c']);
+
+    const afterRanges = {
+      x: lastLayout(Plotly).scene.xaxis.range,
+      y: lastLayout(Plotly).scene.yaxis.range,
+      z: lastLayout(Plotly).scene.zaxis.range,
+    };
+    expect(afterRanges.x).toEqual(beforeRanges.x);
+    expect(afterRanges.y).toEqual(beforeRanges.y);
+    expect(afterRanges.z).toEqual(beforeRanges.z);
+    expect(lastLayout(Plotly).scene.camera).toEqual(userCam);
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(3));
+    expect(boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner').x).toEqual(beforeBox.x);
+
+    const bodyText = document.getElementById('model-tbody').textContent;
+    expect(bodyText).toContain('Claude Max $200 ~40x est.');
+    expect(bodyText).toContain('ChatGPT Pro/Codex $200 ~70x est.');
+    expect(bodyText).toContain('Cursor Ultra $200 ~2x est.');
+  });
+});
+
+describe('provider All selection without ctrl', () => {
+  function providerOptions() {
+    return [...document.getElementById('provider').options];
+  }
+
+  function mainCalls(Plotly) {
+    return Plotly.react.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+  }
+
+  it('offers an All providers entry selected while no provider filter is active', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(rows().length).toBe(2));
+
+    const opts = providerOptions();
+    expect(opts.length).toBeGreaterThan(1);
+    expect(opts[0].value).toBe('');
+    expect(opts[0].textContent).toMatch(/all providers/i);
+    expect(opts[0].selected).toBe(true);
+    expect(opts.slice(1).every((o) => !o.selected)).toBe(true);
+  });
+
+  it('toggles a provider off with a second click without needing ctrl', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    const provider = document.getElementById('provider');
+    const acme = providerOptions().find((o) => o.value === 'Acme');
+    // First click selects Acme only (no ctrl needed).
+    acme.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(providerOptions().find((o) => o.value === '').selected).toBe(false);
+    expect(acme.selected).toBe(true);
+
+    // Second click on the selected provider deselects it: All reflects the empty filter.
+    acme.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+    expect(providerOptions().find((o) => o.value === '').selected).toBe(true);
+    expect(acme.selected).toBe(false);
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+  });
+
+  it('selecting All clears the provider filter', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    const provider = document.getElementById('provider');
+    const acme = providerOptions().find((o) => o.value === 'Acme');
+    acme.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(acme.selected).toBe(true);
+
+    const all = providerOptions().find((o) => o.value === '');
+    all.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+    expect(all.selected).toBe(true);
+    expect(acme.selected).toBe(false);
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+  });
+
+  it('keeps other selections when All lands selected alongside them', async () => {
+    await import('./main.js');
+    await vi.waitFor(() => expect(rows().length).toBe(2));
+
+    // Keyboard/shift multi-select can leave All flagged with others: All yields.
+    const provider = document.getElementById('provider');
+    for (const o of provider.options) o.selected = o.value === '' || o.value === 'Acme';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(rows().length).toBe(2));
+
+    const opts = providerOptions();
+    expect(opts.find((o) => o.value === 'Acme').selected).toBe(true);
+    expect(opts.find((o) => o.value === '').selected).toBe(false);
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+  });
+
+  it('supports several providers at once and drops stale ones on era change', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    const provider = document.getElementById('provider');
+    for (const o of provider.options) o.selected = o.value === 'Acme' || o.value === 'Other';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+
+    // Era 0 only knows Acme: the stale Other selection must go, All stays off.
+    const era0 = document.querySelector('input[name="era"][value="0"]');
+    era0.checked = true;
+    era0.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+    const opts = providerOptions();
+    expect(opts.some((o) => o.value === 'Other')).toBe(false);
+    expect(opts.find((o) => o.value === 'Acme').selected).toBe(true);
+    expect(opts.find((o) => o.value === '').selected).toBe(false);
+  });
+});
+
+describe('log scale toggle', () => {
+  const LOG_FIXTURE = FIXTURE.replace(
+    '<input id="hide-retired" type="checkbox" checked />',
+    `<input id="hide-retired" type="checkbox" checked />
+<input id="log-scale" type="checkbox" checked />`,
+  );
+
+  function mainCalls(Plotly) {
+    return Plotly.react.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+  }
+
+  function boxCalls(Plotly) {
+    const box = document.getElementById('chart-box');
+    if (!box) return [];
+    return Plotly.react.mock.calls.filter((c) => c[0] === box);
+  }
+
+  it('uses log axes by default with matching overlay ranges', async () => {
+    document.body.innerHTML = LOG_FIXTURE;
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    expect(document.getElementById('log-scale').checked).toBe(true);
+    const layout = mainCalls(Plotly).at(-1)[2];
+    expect(layout.scene.xaxis.type).toBe('log');
+    expect(layout.scene.yaxis.type).toBe('log');
+    expect(layout.scene.xaxis.title.text).toMatch(/log/i);
+    expect(layout.scene.yaxis.title.text).toMatch(/log/i);
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
+    const boxLayout = boxCalls(Plotly).at(-1)[2];
+    expect(boxLayout.scene.xaxis.type).toBe('log');
+    expect(boxLayout.scene.yaxis.type).toBe('log');
+    expect(boxLayout.scene.xaxis.range).toEqual(layout.scene.xaxis.range);
+    expect(boxLayout.scene.yaxis.range).toEqual(layout.scene.yaxis.range);
+  });
+
+  it('switches cost and speed to linear zero-based axes with linear words', async () => {
+    document.body.innerHTML = LOG_FIXTURE;
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    document.getElementById('log-scale').checked = false;
+    document.getElementById('log-scale').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    const layout = mainCalls(Plotly).at(-1)[2];
+    expect(layout.scene.xaxis.type).toBe('linear');
+    expect(layout.scene.yaxis.type).toBe('linear');
+    expect(layout.scene.zaxis.type ?? 'linear').toBe('linear');
+    expect(layout.scene.xaxis.title.text).toMatch(/linear/i);
+    expect(layout.scene.xaxis.title.text).not.toMatch(/log/i);
+    expect(layout.scene.yaxis.title.text).toMatch(/linear/i);
+    expect(layout.scene.xaxis.range[0]).toBe(0);
+    expect(layout.scene.xaxis.range[1]).toBeGreaterThan(2);
+    expect(layout.scene.yaxis.range[0]).toBe(0);
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(2));
+    const boxLayout = boxCalls(Plotly).at(-1)[2];
+    expect(boxLayout.scene.xaxis.type).toBe('linear');
+    expect(boxLayout.scene.yaxis.type).toBe('linear');
+    expect(boxLayout.scene.xaxis.range).toEqual(layout.scene.xaxis.range);
+    expect(boxLayout.scene.yaxis.range).toEqual(layout.scene.yaxis.range);
+    expect(boxLayout.scene.aspectmode).toBe(layout.scene.aspectmode);
+    // Green box stays faint and hoverable dots keep round markers.
+    const corner = boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner');
+    expect(corner.opacity).toBe(0.15);
+    const data = mainCalls(Plotly).at(-1)[1];
+    expect(data.some((t) => t.type === 'mesh3d')).toBe(false);
+  });
+
+  it('keeps the dragged camera across the scale toggle', async () => {
+    document.body.innerHTML = LOG_FIXTURE;
+    const handlers = {};
+    document.getElementById('chart').on = (name, fn) => { handlers[name] = fn; };
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    const userCam = {
+      eye: { x: 0.2, y: 0.4, z: 2.5 },
+      center: { x: 0.1, y: -0.2, z: 0.05 },
+      up: { x: 0, y: 0, z: 1 },
+      projection: { type: 'perspective' },
+    };
+    handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(userCam)) });
+
+    document.getElementById('log-scale').checked = false;
+    document.getElementById('log-scale').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(mainCalls(Plotly).at(-1)[2].scene.camera).toEqual(userCam);
+  });
+});
+
+describe('archive era with historical speed', () => {
+  const ARCHIVE_PAYLOAD = {
+    source_url: 'https://example.test/upstream.json',
+    source_updated: '2026-09-24',
+    fetched_at: '2026-09-24T00:00:00+00:00',
+    eras: [
+      { index: 0, label: 'v4.1 (before 2026-09-05)', note: 'archive note' },
+      { index: 1, label: 'v4.3 (current, since 2026-09-05)', note: 'current note' },
+    ],
+    models: [
+      { id: 'old-a', name: 'Old A', creator: 'Acme', release: '2025-04-14', iq: 14.8, cost: 0.05, retired: true, open: false, era: 0, time_sec: 37.4, time_observed: '2026-08-21', tps: null, ttft: null },
+      { id: 'old-b', name: 'Old B', creator: 'Other', release: '2025-05-01', iq: 20, cost: 0.1, retired: true, open: true, era: 0, time_sec: 50, time_observed: '2026-08-26', tps: null, ttft: null },
+      { id: 'new-a', name: 'New A', creator: 'Acme', release: '2026-09-01', iq: 40, cost: 0.5, retired: false, open: true, era: 1, time_sec: 10, tps: 100, ttft: 0.5 },
+      { id: 'new-b', name: 'New B', creator: 'Acme', release: '2026-09-02', iq: 50, cost: 2, retired: false, open: false, era: 1, time_sec: 5, tps: 200, ttft: 0.3 },
+    ],
+  };
+
+  function useArchiveDom() {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ARCHIVE_PAYLOAD });
+  }
+
+  function mainCalls(Plotly) {
+    return Plotly.react.mock.calls.filter((c) => c[0] === document.getElementById('chart'));
+  }
+
+  function lastData(Plotly) {
+    return mainCalls(Plotly).at(-1)[1];
+  }
+
+  it('reveals historical models when the archive era is selected despite hide-retired', async () => {
+    useArchiveDom();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+    expect(document.getElementById('hide-retired').checked).toBe(true);
+
+    const era0 = document.querySelector('input[name="era"][value="0"]');
+    era0.checked = true;
+    era0.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    // Archive rows are all retired-today but were live historically: shown.
+    expect(document.getElementById('hide-retired').checked).toBe(false);
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+    expect(document.getElementById('model-tbody').textContent).toContain('Old A');
+    const data = lastData(Plotly);
+    expect(data.some((t) => (t.text ?? []).join('\n').includes('Old A'))).toBe(true);
+  });
+
+  it('labels archived speed with its observation date in hover and table', async () => {
+    useArchiveDom();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    const hoverHandlers = {};
+    document.getElementById('chart').on = (name, fn) => { hoverHandlers[name] = fn; };
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    const era0 = document.querySelector('input[name="era"][value="0"]');
+    era0.checked = true;
+    era0.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+
+    const chart = document.getElementById('chart');
+    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
+      toJSON: () => {},
+    });
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 100, clientY: 100, bubbles: true }));
+    const data = lastData(Plotly);
+    let curveNumber = 0;
+    let pointNumber = 0;
+    outer: for (let ti = 0; ti < data.length; ti++) {
+      for (let pi = 0; pi < (data[ti].text ?? []).length; pi++) {
+        if (String(data[ti].text[pi]).includes('Old A')) {
+          curveNumber = ti;
+          pointNumber = pi;
+          break outer;
+        }
+      }
+    }
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+    const tip = document.getElementById('chart-hover-tooltip');
+    expect(tip.innerHTML).toContain('2026-08-21');
+    expect(document.getElementById('model-tbody').textContent).toContain('2026-08-21');
+  });
+
+  it('disables throughput without measurements and returns to time on archive select', async () => {
+    useArchiveDom();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+
+    // Throughput works in the current era.
+    document.getElementById('speed-mode').value = 'throughput';
+    document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+
+    // Archive has times but no throughput: falls back to time, option disabled.
+    const era0 = document.querySelector('input[name="era"][value="0"]');
+    era0.checked = true;
+    era0.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(3));
+    expect(document.getElementById('speed-mode').value).toBe('time');
+    const tpsOption = [...document.getElementById('speed-mode').options].find((o) => o.value === 'throughput');
+    expect(tpsOption.disabled).toBe(true);
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+    expect(document.getElementById('status').textContent).toBe('');
+  });
+
+  it('names the active speed metric when it has no measurements in the era', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...ARCHIVE_PAYLOAD,
+        models: ARCHIVE_PAYLOAD.models.filter((m) => m.era === 0),
+        eras: [{ index: 0, label: 'v4.1 (archive)', note: 'archive note' }],
+      }),
+    });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+    // Archive times plot in the default time mode.
+    expect(document.getElementById('counts').textContent).toContain('2 plotted');
+
+    // Forcing throughput (no measurements in this era) states the metric.
+    document.getElementById('speed-mode').value = 'throughput';
+    document.getElementById('speed-mode').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
+    expect(lastData(Plotly)).toEqual([]);
+    // No stale "predates speed" wording: the era has times, only throughput is missing.
+    expect(document.getElementById('status').textContent).not.toMatch(/predates/i);
+    expect(document.getElementById('status').textContent).toMatch(/throughput/i);
+    // Cost and intelligence stay listed.
+    expect(document.getElementById('model-tbody').textContent).toContain('Old A');
+  });
+});

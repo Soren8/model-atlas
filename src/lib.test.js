@@ -28,11 +28,15 @@ import {
   parseUtilizationPercent,
   estimateSubscriptionCost,
   logAxisRange,
+  linearAxisRange,
   eraDomainPoints,
   eraChartDomains,
   computeHoverTooltipPosition,
   resolveHoverAnchor,
   HOVER_TOOLTIP_OFFSET,
+  subscriptionMonthlyFee,
+  isHighTierSubscription,
+  HIGH_TIER_FEE_THRESHOLD_USD,
 } from './lib.js';
 import {
   DEAL_ENTRIES,
@@ -741,6 +745,84 @@ describe('logAxisRange', () => {
   });
 });
 
+describe('linearAxisRange', () => {
+  it('returns raw bounds from zero through the padded max containing the data', () => {
+    const range = linearAxisRange(0.5, 2);
+
+    expect(range[0]).toBe(0);
+    expect(range[1]).toBeGreaterThan(2);
+    expect(range[1]).toBeLessThan(3);
+  });
+
+  it('keeps a singleton cost plottable from zero through padding', () => {
+    const range = linearAxisRange(5, 5);
+
+    expect(range[0]).toBe(0);
+    expect(range[1]).toBeGreaterThan(5);
+  });
+
+  it('returns undefined for missing or non-positive maxima', () => {
+    expect(linearAxisRange(0, null)).toBeUndefined();
+    expect(linearAxisRange(0, 0)).toBeUndefined();
+    expect(linearAxisRange(0, -3)).toBeUndefined();
+    expect(linearAxisRange(0, NaN)).toBeUndefined();
+  });
+});
+
+describe('linear scale domains and preferred corner', () => {
+  it('uses raw zero-based ranges for cost and speed when logScale is false', () => {
+    const models = [
+      model({ id: 'a', era: 1, cost: 0.5, time_sec: 10, iq: 40 }),
+      model({ id: 'b', era: 1, cost: 2, time_sec: 5, iq: 50 }),
+    ];
+
+    const domains = eraChartDomains(models, { era: 1, speedMode: 'time', utilization: 1, logScale: false });
+
+    expect(domains.xBounds).toEqual([0.5, 2]);
+    expect(domains.xRange[0]).toBe(0);
+    expect(domains.xRange[1]).toBeGreaterThan(2);
+    expect(domains.yRange[0]).toBe(0);
+    expect(domains.yRange[1]).toBeGreaterThan(10);
+    expect(domains.zMax).toBe(50);
+  });
+
+  it('keeps log ranges by default and under explicit logScale', () => {
+    const models = [
+      model({ id: 'a', era: 1, cost: 0.5, time_sec: 10, iq: 40 }),
+      model({ id: 'b', era: 1, cost: 2, time_sec: 5, iq: 50 }),
+    ];
+
+    const implicit = eraChartDomains(models, { era: 1, speedMode: 'time', utilization: 1 });
+    const explicit = eraChartDomains(models, { era: 1, speedMode: 'time', utilization: 1, logScale: true });
+
+    expect(implicit.xRange).toEqual(explicit.xRange);
+    expect(implicit.xRange[0]).toBeLessThan(Math.log10(0.5));
+  });
+
+  it('splits the preferred corner at arithmetic midpoints in linear mode', () => {
+    const models = [
+      model({ id: 'lo', cost: 1, time_sec: 4, iq: 20 }),
+      model({ id: 'hi', cost: 4, time_sec: 16, iq: 60 }),
+    ];
+
+    const bounds = preferredCornerBounds(models, 'time', undefined, false);
+
+    expect(bounds.x).toEqual([1, 2.5]);
+    expect(bounds.y).toEqual([4, 10]);
+    expect(bounds.z).toEqual([40, 60]);
+  });
+
+  it('keeps geometric midpoints on log axes by default', () => {
+    const models = [
+      model({ id: 'lo', cost: 1, time_sec: 4, iq: 20 }),
+      model({ id: 'hi', cost: 4, time_sec: 16, iq: 60 }),
+    ];
+
+    expect(preferredCornerBounds(models, 'time').x).toEqual([1, 2]);
+    expect(preferredCornerBounds(models, 'time', undefined, true).x).toEqual([1, 2]);
+  });
+});
+
 describe('era chart domains keep the grid static', () => {
   function measuredDealBase(overrides = {}) {
     return {
@@ -1333,5 +1415,102 @@ describe('subscription scenario points', () => {
     expect(subscription.map((p) => p.deal.kind).sort()).toEqual(
       ['claude-max', 'codex', 'cursor-ultra', 'cursor-ultra'],
     );
+  });
+});
+
+describe('exclude $200+ tiers by monthly fee', () => {
+  function goRow(overrides = {}) {
+    return model({
+      id: 'glm-5-3-flash',
+      name: 'GLM 5.3 Flash',
+      creator: 'Z AI',
+      iq: 41.8,
+      cost: 0.6,
+      time_sec: 50,
+      tps: 90,
+      ...overrides,
+    });
+  }
+
+  function opusRow(overrides = {}) {
+    return model({
+      id: 'claude-opus-5-xhigh',
+      name: 'Claude Opus 5 (xhigh)',
+      creator: 'Anthropic',
+      iq: 49.7,
+      cost: 4.8,
+      time_sec: 100,
+      tps: 60,
+      ...overrides,
+    });
+  }
+
+  function museRow(overrides = {}) {
+    return model({
+      id: 'muse-spark-1-3-xhigh',
+      name: 'Muse Spark 1.3 (xhigh)',
+      creator: 'Meta',
+      iq: 45.1,
+      cost: 1.367794,
+      time_sec: 227.56,
+      tps: 237.4,
+      ...overrides,
+    });
+  }
+
+  it('reads the monthly plan fee generically, keeping Go at $10/mo while $200 plans are high tiers', () => {
+    expect(HIGH_TIER_FEE_THRESHOLD_USD).toBe(200);
+    // Scenario descriptors carry their monthly fee.
+    expect(subscriptionMonthlyFee({ kind: 'claude-max', fee: 200 })).toBe(200);
+    expect(subscriptionMonthlyFee({ kind: 'codex', fee: 200 })).toBe(200);
+    expect(subscriptionMonthlyFee({ kind: 'cursor-ultra', fee: 200 })).toBe(200);
+    // Go quota-equiv bills at $10/mo: the $30/$60 values are quota amounts.
+    const [go] = buildDealPoints([goRow()], { era: 1 }).filter((p) => p.deal.kind === 'go');
+    expect(go.deal.tier).toBe(60);
+    expect(go.deal.fee).toBe(10);
+    expect(subscriptionMonthlyFee(go.deal)).toBe(10);
+    // Direct Contributor is not a subscription fee and never counts as high tier.
+    expect(subscriptionMonthlyFee({ kind: 'contributor' })).toBeUndefined();
+    expect(subscriptionMonthlyFee(undefined)).toBeUndefined();
+    expect(isHighTierSubscription(go.deal)).toBe(false);
+    expect(isHighTierSubscription({ kind: 'claude-max', fee: 200 })).toBe(true);
+    expect(isHighTierSubscription({ kind: 'contributor' })).toBe(false);
+    expect(isHighTierSubscription(undefined)).toBe(false);
+  });
+
+  it('applies the $200 threshold with $199.99 staying and $200 leaving', () => {
+    expect(isHighTierSubscription({ kind: 'go', fee: 199.99 })).toBe(false);
+    expect(isHighTierSubscription({ kind: 'go', fee: 200 })).toBe(true);
+    expect(isHighTierSubscription({ kind: 'codex', fee: 200 })).toBe(true);
+  });
+
+  it('omits $200 scenarios when excluded while retaining Go and compounded Go', () => {
+    const rows = [goRow(), opusRow(), museRow()];
+    const all = buildSubscriptionPoints(rows, { era: 1 });
+    const filtered = buildSubscriptionPoints(rows, { era: 1, excludeHighTiers: true });
+
+    expect(all.map((p) => p.deal.kind).sort()).toEqual(
+      expect.arrayContaining(['claude-max', 'contributor-go', 'go']),
+    );
+    expect(filtered.some((p) => p.deal.kind === 'claude-max')).toBe(false);
+    expect(filtered.some((p) => p.deal.kind === 'codex')).toBe(false);
+    expect(filtered.some((p) => p.deal.kind === 'cursor-ultra')).toBe(false);
+    // Lower-cost Go estimates stay: direct Go $60 plus compounded Contributor-via-Go.
+    expect(filtered.map((p) => p.deal.kind).sort()).toEqual(['contributor-go', 'go']);
+    expect(filtered.every((p) => subscriptionMonthlyFee(p.deal) < 200)).toBe(true);
+    // Contributor always-on split is unaffected by the exclusion.
+    expect(buildContributorPoints(rows, { era: 1 }).map((p) => p.deal.kind)).toEqual(['contributor']);
+  });
+
+  it('keeps all tiers in the stable domain while excluded so the grid never moves', () => {
+    const rows = [goRow(), opusRow()];
+    const excluded = buildSubscriptionPoints(rows, { era: 1, excludeHighTiers: true });
+    expect(excluded.some((p) => p.deal.kind === 'claude-max')).toBe(false);
+
+    const points = eraDomainPoints(rows, { era: 1, utilization: 1 });
+    expect(points.filter((p) => p.deal?.kind === 'claude-max')).toHaveLength(1);
+    const domains = eraChartDomains(rows, { era: 1, speedMode: 'time', utilization: 1 });
+    const cheapest = Math.min(...buildDealPoints(rows, { era: 1 }).map((d) => d.cost));
+    expect(domains.xBounds[0]).toBeCloseTo(cheapest, 10);
   });
 });

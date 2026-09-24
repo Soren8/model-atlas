@@ -120,7 +120,9 @@ const els = {
   openOnly: document.getElementById('open-only'),
   hideRetired: document.getElementById('hide-retired'),
   frontierOnly: document.getElementById('frontier-only'),
+  logScale: document.getElementById('log-scale'),
   dealsToggle: document.getElementById('deals-toggle'),
+  dealsExcludeHigh: document.getElementById('deals-exclude-high'),
   dealsUtil: document.getElementById('deals-util'),
   dealsNote: document.getElementById('deals-note'),
   resetCamera: document.getElementById('reset-camera'),
@@ -138,8 +140,14 @@ const state = {
   openOnly: false,
   includeRetired: false,
   frontierOnly: false,
+  // Log scale (on by default): cost and the active speed axis switch
+  // between log and linear together; intelligence is always linear.
+  logScale: true,
   // Subscription toggle only: direct Contributor estimates are always on.
   dealsEnabled: false,
+  // High-tier exclusion: checked by default, filters $200+/mo subscription
+  // estimates by monthly plan fee (Go stays: $10/mo plan, quota ≠ fee).
+  excludeHighTiers: true,
   utilization: 1,
   sortKey: 'iq',
   sortDir: -1,
@@ -241,7 +249,8 @@ function hardenBoxLayer(box) {
   } catch {}
 }
 
-function boxLayout(zMax, xRange, yRange, camera) {
+function boxLayout(zMax, xRange, yRange, camera, logScale = true) {
+  const axisType = logScale ? 'log' : 'linear';
   return {
     autosize: true,
     margin: { l: 0, r: 0, t: 30, b: 0 },
@@ -261,7 +270,7 @@ function boxLayout(zMax, xRange, yRange, camera) {
       dragmode: false,
       xaxis: {
         title: { text: '' },
-        type: 'log',
+        type: axisType,
         visible: false,
         showgrid: false,
         zeroline: false,
@@ -272,7 +281,7 @@ function boxLayout(zMax, xRange, yRange, camera) {
       },
       yaxis: {
         title: { text: '' },
-        type: 'log',
+        type: axisType,
         visible: false,
         showgrid: false,
         zeroline: false,
@@ -295,14 +304,14 @@ function boxLayout(zMax, xRange, yRange, camera) {
   };
 }
 
-function boxTraceFor(domainPoints, speedMode, zCeiling) {
-  const trace = preferredCornerTrace(domainPoints, speedMode, zCeiling);
+function boxTraceFor(domainPoints, speedMode, zCeiling, logScale = true) {
+  const trace = preferredCornerTrace(domainPoints, speedMode, zCeiling, logScale);
   if (!trace) return null;
   trace.showlegend = false;
   return trace;
 }
 
-async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, cameraSnapshot, hasPoints) {
+async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, cameraSnapshot, hasPoints, logScale = true) {
   if (!state.webgl) return;
   let boxDiv;
   try {
@@ -312,11 +321,11 @@ async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, c
   }
   // Empty views show no misleading box; collapsed era ranges also yield no
   // trace via preferredCornerBounds null. Ranges/camera still match main.
-  const trace = hasPoints ? boxTraceFor(domainPoints, speedMode, zMax) : null;
+  const trace = hasPoints ? boxTraceFor(domainPoints, speedMode, zMax, logScale) : null;
   const data = trace ? [trace] : [];
   const boxConfig = { responsive: true, displaylogo: false, displayModeBar: false };
   try {
-    await Plotly.react(boxDiv, data, boxLayout(zMax, xRange, yRange, cameraSnapshot), boxConfig);
+    await Plotly.react(boxDiv, data, boxLayout(zMax, xRange, yRange, cameraSnapshot, logScale), boxConfig);
     boxDiv.style.display = '';
     hardenBoxLayer(boxDiv);
   } catch {
@@ -358,11 +367,14 @@ function speedValue(m) {
 
 /**
  * Measured rows plus estimates: direct Contributor repricings are always on
- * (distinct token tariff, separate trace); subscription estimates (Go
- * quota-equiv including compounded Contributor-via-Go, plus the Claude Max /
- * Codex / Cursor Ultra scenarios) join only when the subscription toggle is
- * on. Estimates flow through the same search/provider/era/retired/frontier
- * filters; measured rows are never mutated.
+ * (distinct token tariff, separate trace, never excluded); subscription
+ * estimates (Go quota-equiv including compounded Contributor-via-Go, plus
+ * the Claude Max / Codex / Cursor Ultra scenarios) join only when the
+ * subscription toggle is on, minus $200+/mo plans while the exclusion is
+ * checked (generic monthly-fee filter; Go stays at $10/mo). Estimates flow
+ * through the same search/provider/era/retired/frontier filters; measured
+ * rows are never mutated. Domains keep all tiers so this filter never
+ * rescales the grid/camera.
  */
 function combinedModels() {
   if (!state.payload) return [];
@@ -371,7 +383,7 @@ function combinedModels() {
   if (!state.dealsEnabled) return state.payload.models.concat(contributor);
   return state.payload.models.concat(
     contributor,
-    buildSubscriptionPoints(state.payload.models, opts),
+    buildSubscriptionPoints(state.payload.models, { ...opts, excludeHighTiers: state.excludeHighTiers }),
   );
 }
 
@@ -389,12 +401,16 @@ function currentFilters() {
 
 function hoverText(m) {
   if (m.deal) return dealHoverText(m);
+  const timeLine = m.time_sec == null
+    ? 'Time/task: n/a'
+    : `Time/task: ${formatNum(m.time_sec)} s` +
+      (m.time_observed ? ` (archived measurement ${escapeHtml(m.time_observed)})` : '');
   const lines = [
     `<b>${escapeHtml(m.name)}</b>`,
     `${escapeHtml(m.creator)} · released ${escapeHtml(m.release)}`,
     `Intelligence: ${formatNum(m.iq)}`,
     `Cost/task: ${formatUsd(m.cost)}`,
-    `Time/task: ${m.time_sec == null ? 'n/a' : `${formatNum(m.time_sec)} s`}`,
+    timeLine,
     `Throughput: ${m.tps == null ? 'n/a' : `${formatNum(m.tps)} tok/s`}`,
     `TTFT: ${m.ttft == null ? 'n/a' : `${formatNum(m.ttft, 2)} s`}`,
     `${m.open ? 'Open weights' : 'Closed'} · ${m.retired ? 'retired' : 'live'}`,
@@ -566,15 +582,17 @@ function wireHoverTooltip() {
 
 function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
   const mode = SPEED_MODES[state.speedMode];
+  const scaleWord = state.logScale ? 'log' : 'linear';
+  const axisType = state.logScale ? 'log' : 'linear';
   const yTitle =
     state.speedMode === 'time'
-      ? 'Time per task, s (log, lower is better)'
-      : 'Throughput, tok/s (log, higher is better)';
+      ? `Time per task, s (${scaleWord}, lower is better)`
+      : `Throughput, tok/s (${scaleWord}, higher is better)`;
   // Contributor estimates are always plotted (distinct token tariff); the
   // subscription toggle only adds subscription estimates on top.
   const xTitle = subscriptionOn
-    ? 'Cost per task, USD (log; Contributor + subscription estimates)'
-    : 'Cost per task, USD (log; Contributor estimates)';
+    ? `Cost per task, USD (${scaleWord}; Contributor + subscription estimates)`
+    : `Cost per task, USD (${scaleWord}; Contributor estimates)`;
   return {
     autosize: true,
     margin: { l: 0, r: 0, t: 30, b: 0 },
@@ -595,14 +613,14 @@ function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
         // Plotly gl3d scene axes require the object form; a plain string
         // renders the literal axis name ("x"/"z").
         title: { text: xTitle },
-        type: 'log',
+        type: axisType,
         color: '#9aa4b5',
         gridcolor: '#263042',
         ...(xRange === undefined ? {} : { range: xRange }),
       },
       yaxis: {
         title: { text: yTitle, font: { color: mode.lowerIsBetter ? '#9aa4b5' : '#80ed99' } },
-        type: 'log',
+        type: axisType,
         color: '#9aa4b5',
         gridcolor: '#263042',
         ...(yRange === undefined ? {} : { range: yRange }),
@@ -617,8 +635,8 @@ function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
   };
 }
 
-function preferredCornerTrace(domainPoints, speedMode, zCeiling) {
-  const bounds = preferredCornerBounds(domainPoints, speedMode, zCeiling);
+function preferredCornerTrace(domainPoints, speedMode, zCeiling, logScale = true) {
+  const bounds = preferredCornerBounds(domainPoints, speedMode, zCeiling, logScale);
   if (!bounds) return null;
   const [x0, x1] = bounds.x;
   const [y0, y1] = bounds.y;
@@ -770,6 +788,7 @@ async function render() {
     speedMode: state.speedMode,
     utilization: state.utilization,
     now,
+    logScale: state.logScale,
   });
   const domainForBox = eraDomainPoints(state.payload.models, {
     era: state.era,
@@ -792,16 +811,17 @@ async function render() {
   if (!state.webgl) return;
 
   if (!shown.length) {
+    const modeLabel = SPEED_MODES[state.speedMode]?.label ?? 'Speed';
     setStatus(
       tableShown.length
-        ? 'No plotted points: this era predates speed measurements (recorded from July 2026). Cost and intelligence are still listed below.'
+        ? `No plotted points for ${modeLabel} in this era (no ${modeLabel.toLowerCase()} measurements under the current filters). Cost and intelligence are still listed below.`
         : 'No models match the current filters. Loosen the search or provider selection.',
     );
     // Empty views keep the fixed era grid (no misleading box) so the empty
     // state stays accurate while the axes do not rescale. Camera persists.
     lastTraceData = [];
     await Plotly.react(els.chart, [], layout(zMax, state.dealsEnabled, xRange, yRange, cameraSnapshot), { responsive: true, displaylogo: false });
-    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, false);
+    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, false, state.logScale);
   } else {
     setStatus('');
     try {
@@ -824,7 +844,7 @@ async function render() {
       );
       return;
     }
-    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, true);
+    await renderBoxOverlay(domainForBox, state.speedMode, zMax, xRange, yRange, cameraSnapshot, true, state.logScale);
   }
   // A drag/reset during this async react would otherwise be overwritten by
   // the stale snapshot. Re-apply the latest stored camera when this is still
@@ -867,9 +887,15 @@ function renderTable(shown, frontierIds) {
   els.thSpeed.textContent = state.speedMode === 'time' ? 'Time / task' : 'Throughput';
   els.tbody.innerHTML = rows
     .map((m) => {
+      const speedObserved = state.speedMode === 'time' && m.time_sec != null && m.time_observed
+        ? ` (${m.time_observed})`
+        : '';
+      const speedTitle = speedObserved
+        ? `Archived speed measurement observed ${m.time_observed}; archived times are sparse and not synchronized to the snapshot date.`
+        : '';
       const speed =
         state.speedMode === 'time'
-          ? m.time_sec == null ? 'n/a' : `${formatNum(m.time_sec)} s`
+          ? m.time_sec == null ? 'n/a' : `${formatNum(m.time_sec)} s${speedObserved}`
           : m.tps == null ? 'n/a' : `${formatNum(m.tps)} tok/s`;
       const terms = dealLabel(m.deal);
       return `<tr class="${frontierIds.has(m.id) ? 'frontier-row' : ''}${m.deal ? ' deal-row' : ''}">` +
@@ -877,7 +903,7 @@ function renderTable(shown, frontierIds) {
         `<td class="num">${escapeHtml(m.release)}</td><td class="num">${formatNum(m.iq)}</td>` +
         `<td class="num">${formatUsd(m.cost)}</td>` +
         `<td title="${escapeHtml(dealAssumption(m.deal))}">${escapeHtml(terms)}</td>` +
-        `<td class="num">${speed}</td>` +
+        `<td class="num"${speedTitle ? ` title="${escapeHtml(speedTitle)}"` : ''}>${escapeHtml(speed)}</td>` +
         `<td class="num">${m.tps == null ? 'n/a' : formatNum(m.tps)}</td>` +
         `<td>${m.open ? 'yes' : 'no'}</td><td>${m.retired ? 'retired' : 'live'}</td></tr>`;
     })
@@ -897,8 +923,10 @@ function buildEraOptions() {
     radio.checked = era.index === state.era;
     radio.addEventListener('change', () => {
       state.era = era.index;
-      state.providers.clear();
+      // Keep valid provider selections across eras; buildProviderOptions
+      // prunes providers missing from the new era so none go stale.
       buildProviderOptions();
+      syncEraDependentControls();
       updateEraNote();
       render();
     });
@@ -909,7 +937,45 @@ function buildEraOptions() {
 
 function updateEraNote() {
   const era = state.payload.eras.find((e) => e.index === state.era);
-  els.eraNote.textContent = era?.note ?? '';
+  const base = era?.note ?? '';
+  // Archive eras read fully retired today; that is current status, not
+  // historical availability — the models below were measured live in-era.
+  const eraModels = state.payload.models.filter((m) => m.era === state.era);
+  const archived = eraModels.length > 0 && eraModels.every((m) => m.retired);
+  els.eraNote.textContent = archived && base
+    ? `${base} All rows in this era read retired today (current status); they were available historically.`
+    : base;
+}
+
+/**
+ * Era-dependent control sync, run on era selection and startup (camera is
+ * untouched: this only flips control state before the next render).
+ * Archive eras hold only retired-today rows, so hiding retired would empty
+ * them: reveal history by clearing the hide-retired checkbox. The
+ * throughput metric is disabled while the selected era has no throughput
+ * measurements, falling back to time so the archive stays usable.
+ */
+function syncEraDependentControls() {
+  if (!state.payload) return;
+  const eraModels = state.payload.models.filter((m) => m.era === state.era);
+  if (eraModels.length > 0 && eraModels.every((m) => m.retired)) {
+    state.includeRetired = true;
+    if (els.hideRetired) els.hideRetired.checked = false;
+  }
+  const hasThroughput = eraModels.some((m) => Number.isFinite(m.tps) && m.tps > 0);
+  const tpsOption = els.speedMode?.querySelector('option[value="throughput"]');
+  if (tpsOption) tpsOption.disabled = !hasThroughput;
+  if (!hasThroughput && state.speedMode === 'throughput') {
+    state.speedMode = 'time';
+    if (els.speedMode) els.speedMode.value = 'time';
+  }
+}
+
+function syncProviderSelection() {
+  if (!els.provider) return;
+  for (const opt of els.provider.options) {
+    opt.selected = opt.value === '' ? state.providers.size === 0 : state.providers.has(opt.value);
+  }
 }
 
 function buildProviderOptions() {
@@ -919,11 +985,23 @@ function buildProviderOptions() {
     query: '',
     openOnly: false,
     includeRetired: true,
+    // List every era provider even without the active speed metric so
+    // table-only rows (e.g. archive models missing throughput) stay selectable.
+    requireSpeed: false,
   });
   const summary = providerSummary(eraModels);
   const keep = new Set([...state.providers].filter((p) => summary.some((s) => s.creator === p)));
   state.providers = keep;
   els.provider.innerHTML = '';
+  // Leading sentinel: selected exactly when no provider filter is active.
+  // Native multi-select semantics are kept (arrow keys + Space toggle, full
+  // screen-reader listbox behavior); single clicks toggle via mousedown below
+  // so no ctrl key is ever needed.
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = `All providers (${eraModels.length})`;
+  all.selected = keep.size === 0;
+  els.provider.append(all);
   for (const { creator, count } of summary) {
     const opt = document.createElement('option');
     opt.value = creator;
@@ -946,8 +1024,34 @@ function wireControls() {
       render();
     }, 150);
   });
+  els.provider.addEventListener('mousedown', (e) => {
+    // Single-click toggling without ctrl: prevent the native behavior
+    // (which cannot deselect the last selected option with one click) and
+    // flip just the clicked option, keeping the native listbox, keyboard
+    // (arrows + Space) and screen-reader semantics intact.
+    const target = e.target;
+    if (!target || target.tagName !== 'OPTION') return;
+    e.preventDefault();
+    const value = target.value;
+    if (value === '') state.providers.clear();
+    else if (state.providers.has(value)) state.providers.delete(value);
+    else state.providers.add(value);
+    syncProviderSelection();
+    render();
+  });
   els.provider.addEventListener('change', () => {
-    state.providers = new Set([...els.provider.selectedOptions].map((o) => o.value));
+    // Keyboard/shift selection path (Space toggles natively): translate the
+    // native selection into filter state. The All sentinel reflects an empty
+    // filter — selected alone it clears, alongside others it yields to them.
+    const selected = [...els.provider.selectedOptions].map((o) => o.value);
+    if (selected.includes('') && selected.length > 1) {
+      state.providers = new Set(selected.filter((v) => v !== ''));
+    } else if (selected.length === 1 && selected[0] === '') {
+      state.providers.clear();
+    } else {
+      state.providers = new Set(selected.filter((v) => v !== ''));
+    }
+    syncProviderSelection();
     render();
   });
   els.openOnly.addEventListener('change', () => {
@@ -962,8 +1066,16 @@ function wireControls() {
     state.frontierOnly = els.frontierOnly.checked;
     render();
   });
+  els.logScale?.addEventListener('change', () => {
+    state.logScale = els.logScale.checked;
+    render();
+  });
   els.dealsToggle?.addEventListener('change', () => {
     state.dealsEnabled = els.dealsToggle.checked;
+    render();
+  });
+  els.dealsExcludeHigh?.addEventListener('change', () => {
+    state.excludeHighTiers = els.dealsExcludeHigh.checked;
     render();
   });
   els.dealsUtil?.addEventListener('change', () => {
@@ -1057,6 +1169,8 @@ async function init() {
   }
   state.includeRetired = !els.hideRetired.checked;
   state.dealsEnabled = els.dealsToggle?.checked ?? false;
+  state.excludeHighTiers = els.dealsExcludeHigh?.checked ?? false;
+  state.logScale = els.logScale?.checked ?? true;
   state.utilization = parseUtilizationPercent(els.dealsUtil?.value ?? '100');
   if (els.dealsNote) {
     els.dealsNote.textContent =
@@ -1064,6 +1178,7 @@ async function init() {
   }
   state.era = Math.max(...state.payload.eras.map((e) => e.index));
   buildEraOptions();
+  syncEraDependentControls();
   updateEraNote();
   buildProviderOptions();
   const updated = state.payload.source_updated ?? 'unknown date';

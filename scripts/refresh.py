@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import re
 import sys
@@ -110,6 +111,58 @@ def _slug(name: str, seen: set) -> str:
     return slug
 
 
+def _era_date_bounds(eras: list, index: int) -> tuple:
+    """(lower, upper) YYYY-MM-DD bounds for era ``index``.
+
+    Upstream ``eras[i][0]`` is the start of era ``i + 1``, so era ``index``
+    covers ``eras[index-1][0] <= date < eras[index][0]`` (lower inclusive,
+    upper exclusive); ``None`` means unbounded. With no boundaries there is
+    a single era accepting any dated entry.
+    """
+    lower = eras[index - 1][0] if index >= 1 and index - 1 < len(eras) else None
+    upper = eras[index][0] if 0 <= index < len(eras) else None
+    return lower, upper
+
+
+def _backfill_time(hist, time_sec, bounds) -> tuple:
+    """Fill a missing ``time_sec`` from the upstream ``hist`` list.
+
+    Returns ``(time_sec, observed_date)``. A measured ``time_sec`` is never
+    overwritten (observed date ``None``). Otherwise the latest valid dated
+    entry inside the model's own era bounds wins: entries must be
+    ``[date, cost, index, time_sec]`` lists with a YYYY-MM-DD date in bounds
+    and a positive finite time. Malformed entries (``hist`` of ``0``,
+    3-element rows without time, bad dates, non-positive/non-finite times)
+    are safely ignored; with no valid entry both stay ``None``. Throughput
+    is never synthesized here — ``tps``/``ttft`` stay as measured.
+    """
+    if time_sec is not None:
+        return time_sec, None
+    if not isinstance(hist, list):
+        return None, None
+    lower, upper = bounds
+    best = None
+    for entry in hist:
+        if not isinstance(entry, (list, tuple)) or len(entry) < 4:
+            continue
+        date, _cost, _index, t = entry[0], entry[1], entry[2], entry[3]
+        if not isinstance(date, str) or not RELEASE_RE.match(date):
+            continue
+        if lower is not None and date < lower:
+            continue
+        if upper is not None and date >= upper:
+            continue
+        if isinstance(t, bool) or not _is_num(t):
+            continue
+        if not math.isfinite(t) or not t > 0:
+            continue
+        if best is None or date >= best[0]:
+            best = (date, float(t))
+    if best is None:
+        return None, None
+    return best[1], best[0]
+
+
 def normalize(data: dict) -> dict:
     """Convert validated upstream data into the compact snapshot payload."""
     data = validate_upstream(data)
@@ -117,7 +170,9 @@ def normalize(data: dict) -> dict:
     models = []
     for m in data["models"]:
         (name, creator, release, iq, cost, retired, is_open,
-         _hist, _caps, era, time_sec, tps, ttft) = m
+         hist, _caps, era, time_sec, tps, ttft) = m
+        backfilled_time, observed = _backfill_time(
+            hist, time_sec, _era_date_bounds(data["eras"], era))
         models.append({
             "id": _slug(name, seen),
             "name": name,
@@ -128,7 +183,8 @@ def normalize(data: dict) -> dict:
             "retired": bool(retired),
             "open": bool(is_open),
             "era": era,
-            "time_sec": None if time_sec is None else float(time_sec),
+            "time_sec": None if backfilled_time is None else float(backfilled_time),
+            "time_observed": observed,
             "tps": None if tps is None else float(tps),
             "ttft": None if ttft is None else float(ttft),
         })
