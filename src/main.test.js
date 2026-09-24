@@ -800,3 +800,246 @@ describe('stable axis domains keep the grid fixed', () => {
     for (const v of deals.y) expectContains(ranges(Plotly).y, v);
   });
 });
+
+describe('hover tooltip stays off the dot', () => {
+  function lastData(Plotly) {
+    return Plotly.react.mock.calls.at(-1)[1];
+  }
+
+  it('suppresses the centered built-in hover card via public hoverinfo none', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    Plotly.react.mockClear();
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+
+    const data = lastData(Plotly);
+    const hoverables = data.filter((t) => t.type === 'scatter3d');
+    expect(hoverables.length).toBeGreaterThan(0);
+    // Plotly scatter3d docs: hoverinfo "none" shows nothing but still fires
+    // hover events for a custom tooltip; "text" would render the centered
+    // card that covers the dot. Text alignment alone never moves the card.
+    for (const t of hoverables) expect(t.hoverinfo).toBe('none');
+    for (const t of hoverables) expect(t.hoverlabel?.align).toBeUndefined();
+  });
+
+  it('shows an offset custom tooltip with pointer that hides on unhover and filtering', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    Plotly.react.mockClear();
+    // Capture Plotly hover handlers: main wires plotly_hover/unhover for the
+    // custom offset tooltip (screen coords from the cursor, not the scene).
+    // els.chart is captured at main.js import time, so stub .on beforehand.
+    const hoverHandlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      hoverHandlers[name] = fn;
+    };
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+
+    const chart = document.getElementById('chart');
+    const tip = document.getElementById('chart-hover-tooltip');
+    expect(tip).not.toBeNull();
+    // Never intercepts hover; visual pointer to the dot via CSS arrow.
+    expect(tip.style.pointerEvents).toBe('none');
+    expect(tip.className).toMatch(/arrow/i);
+    expect(['bottom-right', 'bottom-left', 'top-right', 'top-left']).toContain(tip.dataset.placement);
+    expect(tip.hidden || tip.style.display === 'none' || tip.getAttribute('aria-hidden') === 'true').toBe(true);
+
+    // Cursor position drives the offset card (robust across scenes/camera).
+    const rectSpy = vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
+      toJSON: () => {},
+    });
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true }));
+    const data = lastData(Plotly);
+    // Alpha lives on the frontier trace (Models holds only non-frontier
+    // points); resolve the public curveNumber dynamically.
+    let curveNumber = 0;
+    let pointNumber = 0;
+    outer: for (let ti = 0; ti < data.length; ti++) {
+      for (let pi = 0; pi < (data[ti].text ?? []).length; pi++) {
+        if (String(data[ti].text[pi]).includes('Alpha')) {
+          curveNumber = ti;
+          pointNumber = pi;
+          break outer;
+        }
+      }
+    }
+    expect(typeof hoverHandlers['plotly_hover']).toBe('function');
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+
+    expect(tip.hidden).toBe(false);
+    expect(tip.innerHTML).toContain('Alpha');
+    // Offset from the cursor/dot: never centered on it.
+    const left = parseFloat(tip.style.left);
+    const top = parseFloat(tip.style.top);
+    expect(Number.isFinite(left) && Number.isFinite(top)).toBe(true);
+    expect(Math.abs(left - 300) >= 10 && Math.abs(top - 200) >= 10).toBe(true);
+    // Clamped inside the chart.
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(left).toBeLessThanOrEqual(600);
+    expect(top).toBeLessThanOrEqual(400);
+
+    hoverHandlers['plotly_unhover']();
+    expect(tip.hidden).toBe(true);
+
+    // Filtering hides a stale tooltip.
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true }));
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+    expect(tip.hidden).toBe(false);
+    const search = document.getElementById('search');
+    search.value = 'beta';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+    expect(tip.hidden).toBe(true);
+
+    rectSpy.mockRestore();
+  });
+
+  it('preserves escaped hover details in the custom tooltip', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    Plotly.react.mockClear();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...PAYLOAD,
+        models: PAYLOAD.models.map((m) =>
+          m.id === 'a' ? { ...m, name: '<b>Alpha & Co</b>', creator: 'Acme <Ltd>' } : m,
+        ),
+      }),
+    });
+    const hoverHandlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      hoverHandlers[name] = fn;
+    };
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+
+    const chart = document.getElementById('chart');
+    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
+      toJSON: () => {},
+    });
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 100, clientY: 100, bubbles: true }));
+    const PlotlyData = Plotly.react.mock.calls.at(-1)[1];
+    let curveNumber = 0;
+    let pointNumber = 0;
+    outer: for (let ti = 0; ti < PlotlyData.length; ti++) {
+      for (let pi = 0; pi < (PlotlyData[ti].text ?? []).length; pi++) {
+        if (String(PlotlyData[ti].text[pi]).includes('Alpha')) {
+          curveNumber = ti;
+          pointNumber = pi;
+          break outer;
+        }
+      }
+    }
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+
+    const tip = document.getElementById('chart-hover-tooltip');
+    expect(tip.innerHTML).toContain('&lt;b&gt;Alpha');
+    expect(tip.innerHTML).not.toContain('<b>Alpha');
+    expect(tip.innerHTML).toContain('Acme &lt;Ltd&gt;');
+  });
+
+  it('anchors the card at the event dot bbox and stays off the dot near edges', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    Plotly.react.mockClear();
+    const hoverHandlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      hoverHandlers[name] = fn;
+    };
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+
+    const chart = document.getElementById('chart');
+    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
+      toJSON: () => {},
+    });
+    const data = Plotly.react.mock.calls.at(-1)[1];
+    let curveNumber = 0;
+    let pointNumber = 0;
+    outer: for (let ti = 0; ti < data.length; ti++) {
+      for (let pi = 0; pi < (data[ti].text ?? []).length; pi++) {
+        if (String(data[ti].text[pi]).includes('Alpha')) {
+          curveNumber = ti;
+          pointNumber = pi;
+          break outer;
+        }
+      }
+    }
+    const tip = document.getElementById('chart-hover-tooltip');
+    Object.defineProperty(tip, 'offsetWidth', { value: 200, configurable: true });
+    Object.defineProperty(tip, 'offsetHeight', { value: 120, configurable: true });
+
+    // Cursor elsewhere: the public bbox dot anchor wins over cursor coords.
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true }));
+    hoverHandlers['plotly_hover']({
+      points: [{ curveNumber, pointNumber, bbox: { x0: 95, x1: 105, y0: 95, y1: 105 } }],
+    });
+    expect(tip.hidden).toBe(false);
+    expect(parseFloat(tip.style.left)).toBe(114);
+    expect(parseFloat(tip.style.top)).toBe(114);
+    expect(tip.dataset.placement).toBe('bottom-right');
+
+    // Dot near the bottom-right corner: card flips top-left, anchor outside.
+    hoverHandlers['plotly_hover']({
+      points: [{ curveNumber, pointNumber, bbox: { x0: 585, x1: 595, y0: 385, y1: 395 } }],
+    });
+    const left = parseFloat(tip.style.left);
+    const top = parseFloat(tip.style.top);
+    expect(tip.dataset.placement).toBe('top-left');
+    const covers = 590 >= left && 590 <= left + 200 && 390 >= top && 390 <= top + 120;
+    expect(covers).toBe(false);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(left + 200).toBeLessThanOrEqual(600);
+    expect(top + 120).toBeLessThanOrEqual(400);
+  });
+
+  it('recreates the custom card after removal', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    Plotly.react.mockClear();
+    const hoverHandlers = {};
+    document.getElementById('chart').on = (name, fn) => {
+      hoverHandlers[name] = fn;
+    };
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+
+    const chart = document.getElementById('chart');
+    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400, x: 0, y: 0,
+      toJSON: () => {},
+    });
+    chart.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true }));
+    const data = Plotly.react.mock.calls.at(-1)[1];
+    let curveNumber = 0;
+    let pointNumber = 0;
+    outer: for (let ti = 0; ti < data.length; ti++) {
+      for (let pi = 0; pi < (data[ti].text ?? []).length; pi++) {
+        if (String(data[ti].text[pi]).includes('Alpha')) {
+          curveNumber = ti;
+          pointNumber = pi;
+          break outer;
+        }
+      }
+    }
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+    expect(document.getElementById('chart-hover-tooltip').hidden).toBe(false);
+
+    // Plotly.react may clear custom children; hover re-ensures the card.
+    document.getElementById('chart-hover-tooltip').remove();
+    expect(document.getElementById('chart-hover-tooltip')).toBeNull();
+    hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
+    const recreated = document.getElementById('chart-hover-tooltip');
+    expect(recreated).not.toBeNull();
+    expect(recreated.hidden).toBe(false);
+    expect(recreated.innerHTML).toContain('Alpha');
+  });
+});

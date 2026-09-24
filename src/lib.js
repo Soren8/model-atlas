@@ -14,6 +14,7 @@ import {
   CONTRIBUTOR_BLEND,
   GO_SUBSCRIPTION_USD,
   GO_TIERS,
+  MIN_NOTABLE_GO_TIER,
 } from './deals.js';
 
 export const SPEED_MODES = {
@@ -364,6 +365,94 @@ export function resolveGoTier(entry, nowMs = Date.now()) {
 }
 
 /**
+ * Pixel offset between the hovered dot/cursor and the custom hover card.
+ * Plotly gl3d offers no public hover-card offset (`hoverlabel.align` only
+ * changes text alignment, never card position; the centered `middle` anchor
+ * covers the dot), so the chart renders its own HTML tooltip at this offset.
+ */
+export const HOVER_TOOLTIP_OFFSET = 14;
+
+/**
+ * Resolve the hover anchor in container-relative pixels. Prefers the public
+ * Plotly point `bbox` center (actual dot), then `xPixel`/`yPixel`, else the
+ * cursor fallback (hover fires at the cursor, so it stays near the dot).
+ * Returns `{ x, y, source }` or null.
+ */
+export function resolveHoverAnchor(point, rect, fallback) {
+  const w = rect?.width ?? 0;
+  const h = rect?.height ?? 0;
+  const left = rect?.left ?? 0;
+  const top = rect?.top ?? 0;
+  const inside = (x, y) =>
+    Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 &&
+    (w <= 0 || x <= w) && (h <= 0 || y <= h);
+  const bb = point?.bbox;
+  if (bb && [bb.x0, bb.x1, bb.y0, bb.y1].every(Number.isFinite)) {
+    const sx = (bb.x0 + bb.x1) / 2 - left;
+    const sy = (bb.y0 + bb.y1) / 2 - top;
+    if (inside(sx, sy)) return { x: sx, y: sy, source: 'bbox' };
+    const rx = (bb.x0 + bb.x1) / 2;
+    const ry = (bb.y0 + bb.y1) / 2;
+    if (inside(rx, ry)) return { x: rx, y: ry, source: 'bbox' };
+  }
+  if (Number.isFinite(point?.xPixel) && Number.isFinite(point?.yPixel) && inside(point.xPixel, point.yPixel)) {
+    return { x: point.xPixel, y: point.yPixel, source: 'pixel' };
+  }
+  if (fallback && Number.isFinite(fallback.x) && Number.isFinite(fallback.y)) {
+    return { x: fallback.x, y: fallback.y, source: 'cursor' };
+  }
+  return null;
+}
+
+/**
+ * Position a custom hover card offset from the cursor so it never covers
+ * the hovered dot. Defaults to below-right of the cursor (arrow at the
+ * card's top-left pointing back to the dot); flips left/up when the card
+ * would overflow the chart container, then clamps to the edges so the card
+ * stays visible near viewport/chart edges. Pure and unit-testable: callers
+ * pass cursor position relative to the container plus measured sizes.
+ * Returns `{ left, top, placement }` with `placement` naming the card side
+ * for the CSS pointer arrow (`bottom-right`, `bottom-left`, `top-right`,
+ * `top-left`).
+ */
+export function computeHoverTooltipPosition({
+  cursorX,
+  cursorY,
+  containerWidth,
+  containerHeight,
+  tooltipWidth = 0,
+  tooltipHeight = 0,
+  offset = HOVER_TOOLTIP_OFFSET,
+} = {}) {
+  const w = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : 0;
+  const h = Number.isFinite(containerHeight) && containerHeight > 0 ? containerHeight : 0;
+  const tw = Number.isFinite(tooltipWidth) && tooltipWidth > 0 ? tooltipWidth : 0;
+  const th = Number.isFinite(tooltipHeight) && tooltipHeight > 0 ? tooltipHeight : 0;
+  const gap = Number.isFinite(offset) && offset >= 0 ? offset : HOVER_TOOLTIP_OFFSET;
+  const cx = Number.isFinite(cursorX) ? cursorX : 0;
+  const cy = Number.isFinite(cursorY) ? cursorY : 0;
+
+  let left = cx + gap;
+  let top = cy + gap;
+  let flipX = false;
+  let flipY = false;
+  if (tw > 0 && left + tw > w) {
+    left = cx - tw - gap;
+    flipX = true;
+  }
+  if (th > 0 && top + th > h) {
+    top = cy - th - gap;
+    flipY = true;
+  }
+  const maxLeft = Math.max(0, w - tw);
+  const maxTop = Math.max(0, h - th);
+  left = Math.min(Math.max(0, left), maxLeft);
+  top = Math.min(Math.max(0, top), maxTop);
+  const placement = `${flipY ? 'top' : 'bottom'}-${flipX ? 'left' : 'right'}`;
+  return { left, top, placement };
+}
+
+/**
  * Build derived deal-estimate points from measured snapshot models.
  *
  * Each entry of the curated config matches exactly one snapshot row by id
@@ -372,7 +461,11 @@ export function resolveGoTier(entry, nowMs = Date.now()) {
  * provider measurements. The input array is never mutated; derived points are
  * fresh objects carrying a `deal` descriptor with the base cost, tier,
  * utilization and parity assumption. Entries with no matching era row, or
- * whose repriced cost is invalid, are skipped.
+ * whose repriced cost is invalid, are skipped. Only notable tiers gain
+ * points: direct Contributor repricings plus effective Go tiers at or above
+ * `MIN_NOTABLE_GO_TIER` ($30/$60). The $15 tier never produces plotted,
+ * table or domain points — a promo reverting to $15 disappears — while the
+ * pure `estimateGoCost` formula still accepts $15 for general use.
  */
 export function buildDealPoints(models, { era = null, utilization = 1, now = Date.now() } = {}) {
   const use = Number.isFinite(utilization) && utilization > 0 ? Math.min(utilization, 1) : NaN;
@@ -408,6 +501,9 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
       });
     } else if (entry.kind === 'go') {
       const { tier, promoActive } = resolveGoTier(entry, now);
+      // Only notable tiers gain points; $15 (including an expired promo
+      // reverting to its $15 base) disappears from plotted/table/domain sets.
+      if (!(tier >= MIN_NOTABLE_GO_TIER)) continue;
       cost = estimateGoCost(base.cost, tier, { utilization: use });
       if (cost === null) continue;
       deal = {
@@ -427,6 +523,7 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
         deal,
       });
     } else if (entry.kind === 'contributor-go') {
+      if (!(entry.tier >= MIN_NOTABLE_GO_TIER)) continue;
       const contributorCost = estimateContributorCost(base.cost);
       if (contributorCost === null) continue;
       cost = estimateGoCost(contributorCost, entry.tier, { utilization: use });

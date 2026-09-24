@@ -112,9 +112,14 @@ tier. Mapping: `src/deals.js` — hand-curated from the
 current era only, never auto-rescraped. Sources reviewed 2026-09-24;
 re-review when tiers/prices/promos change. Priority: Muse Spark 1.3/1.2
 (xhigh) Contributor repricing (assumed 7:2:1 mix); Go quota-equivalents at
-$15/$30/$60 (V4.1 Flash uses the active $60 promo until 2026-09-28T00:00Z,
-then $15). Uncertain aliases, dated versions, free promos and
-Standard-only (max) efforts are omitted.
+the notable $30/$60 tiers only ($15 omitted; V4.1 Flash uses the active $60
+promo until 2026-09-28T00:00Z, then disappears). Uncertain aliases, dated
+versions, free promos and Standard-only (max) efforts are omitted.
+
+Hover shows an offset HTML card with a pointer to the dot (never centered
+over it); Plotly gl3d offers no public hover-card offset, so the built-in
+card is suppressed via `hoverinfo: 'none'` and positioned from cursor
+screen coords with viewport clamping.
 
 ## Source and data terms
 

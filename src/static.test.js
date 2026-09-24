@@ -19,4 +19,17 @@ describe('site chrome', () => {
     expect(html).toMatch(/quota-equiv/);
     expect(html).toMatch(/2026-09-24/);
   });
+
+  it('keeps the hover card inside the chart with a corner pointer', () => {
+    const css = readFileSync(new URL('./style.css', import.meta.url), 'utf-8');
+
+    // Long deal text scrolls inside the card so clamping keeps it off the dot.
+    expect(css).toMatch(/\.chart-hover-tooltip\s*\{[^}]*max-height/);
+    expect(css).toMatch(/\.chart-hover-tooltip\s*\{[^}]*overflow-y:\s*auto/);
+    // Pointer sits at the corner nearest the dot, not inset toward empty space.
+    expect(css).toMatch(/bottom-right"[^}]*left:\s*-6px/);
+    expect(css).toMatch(/bottom-left"[^}]*right:\s*-6px/);
+    expect(css).toMatch(/top-right"[^}]*left:\s*-6px/);
+    expect(css).toMatch(/top-left"[^}]*right:\s*-6px/);
+  });
 });

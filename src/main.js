@@ -16,6 +16,9 @@ import {
   parseUtilizationPercent,
   eraDomainPoints,
   eraChartDomains,
+  computeHoverTooltipPosition,
+  resolveHoverAnchor,
+  HOVER_TOOLTIP_OFFSET,
   DEALS_TRACE_NAME,
 } from './lib.js';
 import { DEALS_REVIEWED } from './deals.js';
@@ -143,6 +146,110 @@ function escapeHtml(s) {
   );
 }
 
+/**
+ * Custom hover card: Plotly gl3d has no public hover-card offset, so traces
+ * use `hoverinfo: 'none'` (still fires hover events) and this HTML tooltip
+ * renders the same escaped hover HTML offset from the anchor with a CSS
+ * corner pointer at the corner nearest the dot.
+ */
+let hoverTip = null;
+let lastCursor = null;
+let lastTraceData = [];
+let hoverWired = false;
+
+function ensureHoverTooltip() {
+  if (hoverTip && hoverTip.isConnected) return hoverTip;
+  hoverTip = document.getElementById('chart-hover-tooltip');
+  if (!hoverTip) {
+    hoverTip = document.createElement('div');
+    hoverTip.id = 'chart-hover-tooltip';
+    hoverTip.className = 'chart-hover-tooltip chart-hover-arrow';
+    hoverTip.dataset.placement = 'bottom-right';
+    hoverTip.hidden = true;
+    hoverTip.setAttribute('aria-hidden', 'true');
+    // Never intercepts hover; screen-reader users use the data table.
+    hoverTip.style.pointerEvents = 'none';
+    els.chart.appendChild(hoverTip);
+  } else {
+    hoverTip.classList.add('chart-hover-tooltip', 'chart-hover-arrow');
+    hoverTip.style.pointerEvents = 'none';
+    if (!hoverTip.dataset.placement) hoverTip.dataset.placement = 'bottom-right';
+  }
+  return hoverTip;
+}
+
+function hideHoverTooltip() {
+  if (!hoverTip) return;
+  hoverTip.hidden = true;
+  hoverTip.setAttribute('aria-hidden', 'true');
+}
+
+function hoverHtmlForPoint(point) {
+  if (!point) return null;
+  const idx = point.pointNumber;
+  // Preferred: the trace payload Plotly passes with the event (public
+  // `fullData.text[pointNumber]`), preserving the exact escaped hover HTML.
+  const viaFull = point.fullData?.text;
+  if (Array.isArray(viaFull) && Number.isInteger(idx) && typeof viaFull[idx] === 'string') {
+    return viaFull[idx];
+  }
+  // Fallback for minimal event payloads: the last rendered trace data kept
+  // alongside render (same `text` arrays, indexed by public curveNumber).
+  const trace = lastTraceData[point.curveNumber];
+  const viaLast = trace?.text;
+  if (Array.isArray(viaLast) && Number.isInteger(idx) && typeof viaLast[idx] === 'string') {
+    return viaLast[idx];
+  }
+  return null;
+}
+
+function showHoverTooltip(eventData) {
+  const tip = ensureHoverTooltip();
+  const point = eventData?.points?.[0];
+  const html = hoverHtmlForPoint(point);
+  const rect = els.chart.getBoundingClientRect();
+  const cursor = lastCursor
+    ? { x: lastCursor.clientX - rect.left, y: lastCursor.clientY - rect.top }
+    : null;
+  // Prefer the event bbox dot anchor; cursor fallback stays near the dot
+  // since hover fires at the cursor (also covers jsdom/tests without bbox).
+  const anchor = resolveHoverAnchor(point, rect, cursor);
+  if (!html || !anchor) {
+    hideHoverTooltip();
+    return;
+  }
+  tip.innerHTML = html;
+  tip.hidden = false;
+  tip.setAttribute('aria-hidden', 'false');
+  const { left, top, placement } = computeHoverTooltipPosition({
+    cursorX: anchor.x,
+    cursorY: anchor.y,
+    containerWidth: rect.width,
+    containerHeight: rect.height,
+    tooltipWidth: tip.offsetWidth || 0,
+    tooltipHeight: tip.offsetHeight || 0,
+    offset: HOVER_TOOLTIP_OFFSET,
+  });
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  tip.dataset.placement = placement;
+}
+
+function wireHoverTooltip() {
+  ensureHoverTooltip();
+  if (hoverWired) return;
+  hoverWired = true;
+  els.chart.addEventListener('mousemove', (e) => {
+    lastCursor = { clientX: e.clientX, clientY: e.clientY };
+  });
+  els.chart.addEventListener('mouseleave', hideHoverTooltip);
+  // Public Plotly hover events (fired even with hoverinfo 'none').
+  if (typeof els.chart.on === 'function') {
+    els.chart.on('plotly_hover', showHoverTooltip);
+    els.chart.on('plotly_unhover', hideHoverTooltip);
+  }
+}
+
 function layout(zMax, dealsOn = false, xRange, yRange) {
   const mode = SPEED_MODES[state.speedMode];
   const yTitle =
@@ -230,7 +337,9 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       y: rest.map((m) => speedValue(m)),
       z: rest.map((m) => m.iq),
       text: rest.map(hoverText),
-      hoverinfo: 'text',
+      // Public hide for the centered built-in card (still fires hover events
+      // for the offset HTML tooltip). See ensureHoverTooltip above.
+      hoverinfo: 'none',
       marker: {
         size: 4,
         opacity: 0.75,
@@ -248,7 +357,7 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       y: front.map((m) => speedValue(m)),
       z: front.map((m) => m.iq),
       text: front.map(hoverText),
-      hoverinfo: 'text',
+      hoverinfo: 'none',
       marker: {
         size: 7,
         opacity: 1,
@@ -272,7 +381,7 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       y: dealsShown.map((m) => speedValue(m)),
       z: dealsShown.map((m) => m.iq),
       text: dealsShown.map(hoverText),
-      hoverinfo: 'text',
+      hoverinfo: 'none',
       marker: {
         size: 5,
         opacity: 0.9,
@@ -287,6 +396,8 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
 
 async function render() {
   if (!state.payload) return;
+  // Filtering invalidates any visible hover card for a stale point.
+  hideHoverTooltip();
   const eraModels = state.payload.models.filter((m) => m.era === state.era);
   const combined = combinedModels();
   const base = filterModels(combined, currentFilters());
@@ -338,12 +449,15 @@ async function render() {
     );
     // Empty views keep the fixed era grid (no misleading box) so the empty
     // state stays accurate while the axes do not rescale.
+    lastTraceData = [];
     await Plotly.react(els.chart, [], layout(zMax, state.dealsEnabled, xRange, yRange), { responsive: true, displaylogo: false });
     disablePreferredBoxPick(els.chart);
   } else {
     setStatus('');
     try {
-      await Plotly.react(els.chart, traces(shown, frontier, colors, state.speedMode, zMax, domainForBox), layout(zMax, state.dealsEnabled, xRange, yRange), {
+      const traceData = traces(shown, frontier, colors, state.speedMode, zMax, domainForBox);
+      lastTraceData = traceData;
+      await Plotly.react(els.chart, traceData, layout(zMax, state.dealsEnabled, xRange, yRange), {
         responsive: true,
         displaylogo: false,
       });
@@ -565,6 +679,7 @@ async function init() {
   setStatus('');
   try {
     await Plotly.newPlot(els.chart, [], layout(), { responsive: true, displaylogo: false });
+    wireHoverTooltip();
   } catch {
     state.webgl = false;
     els.chart.style.display = 'none';

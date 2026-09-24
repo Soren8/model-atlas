@@ -20,6 +20,9 @@ import {
   logAxisRange,
   eraDomainPoints,
   eraChartDomains,
+  computeHoverTooltipPosition,
+  resolveHoverAnchor,
+  HOVER_TOOLTIP_OFFSET,
 } from './lib.js';
 import { DEAL_ENTRIES, GO_TIERS } from './deals.js';
 
@@ -494,9 +497,8 @@ describe('buildDealPoints', () => {
     expect(buildDealPoints([max], { era: 1 })).toEqual([]);
   });
 
-  it('maps each tier quota from the curated config without fuzzy matching', () => {
+  it('maps each notable tier quota from the curated config without fuzzy matching', () => {
     const models = [
-      measured({ id: 'qwen3-8-max', cost: 2.669985 }),
       measured({ id: 'qwen3-7-max', cost: 1.147296 }),
       measured({ id: 'glm-5-3-flash', cost: 0.25326 }),
     ];
@@ -505,9 +507,10 @@ describe('buildDealPoints', () => {
       buildDealPoints(models, { era: 1 }).map((p) => [p.deal.goId, p.deal.tier]),
     );
 
-    expect(tiers['qwen3.8-max']).toBe(15);
     expect(tiers['qwen3.7-max']).toBe(30);
     expect(tiers['glm-5.3-flash']).toBe(60);
+    // $15 tier omitted as not notable: no point even for exact id matches.
+    expect(buildDealPoints([measured({ id: 'qwen3-8-max', cost: 2.669985 })], { era: 1 })).toEqual([]);
   });
 
   it('matches the selected era only and never mixes eras', () => {
@@ -561,7 +564,7 @@ describe('buildDealPoints', () => {
       /compounded/i,
     );
   });
-  it('keeps every curated entry on a documented tier with a snapshot id', () => {
+  it('keeps every curated entry on a notable tier with a snapshot id', () => {
     for (const entry of DEAL_ENTRIES) {
       expect(typeof entry.snapshotId).toBe('string');
       if (entry.kind === 'contributor') {
@@ -574,15 +577,20 @@ describe('buildDealPoints', () => {
         );
       } else {
         expect(GO_TIERS).toContain(entry.tier);
+        // Direct $15 mappings are omitted as not notable; only $30/$60 remain.
+        expect(entry.tier).toBeGreaterThanOrEqual(30);
+        if (entry.kind === 'contributor-go') expect(entry.tier).toBe(60);
       }
     }
+    // No direct $15 tier entries remain (promo baseTier 15 excepted).
+    expect(DEAL_ENTRIES.some((e) => !e.promo && e.tier === 15)).toBe(false);
     // The priority Contributor rows must exist; max must never be mapped.
     expect(DEAL_ENTRIES.filter((e) => e.snapshotId === 'muse-spark-1-3-xhigh').map((e) => e.kind).sort())
       .toEqual(['contributor', 'contributor-go']);
     expect(DEAL_ENTRIES.some((e) => e.snapshotId === 'muse-spark-1-3-max')).toBe(false);
   });
 
-  it('uses the promo tier while active and the base tier after expiry', () => {
+  it('uses the promo tier while active and disappears after expiry (no $15 fallback)', () => {
     const v41 = {
       id: 'deepseek-v4-1-flash-reasoning-max-effort',
       name: 'DeepSeek V4.1 Flash (Reasoning, Max Effort)',
@@ -607,17 +615,15 @@ describe('buildDealPoints', () => {
     expect(dealLabel(promoPoint.deal)).toContain('(promo)');
     expect(dealAssumption(promoPoint.deal)).toContain('2026-09-28');
 
-    const [basePoint] = buildDealPoints([v41], { era: 1, now: after });
-    expect(basePoint.deal.tier).toBe(15);
-    expect(basePoint.deal.promoActive).toBe(false);
-    expect(basePoint.cost).toBeCloseTo(0.265225 * 10 / 15, 10);
+    // Expired promo reverts to the $15 base tier, which is not notable:
+    // the point disappears instead of falling back.
+    expect(buildDealPoints([v41], { era: 1, now: after })).toEqual([]);
 
-    // An invalid clock never assumes the promo.
-    const [safePoint] = buildDealPoints([v41], { era: 1, now: NaN });
-    expect(safePoint.deal.tier).toBe(15);
+    // An invalid clock never assumes the promo (and also disappears).
+    expect(buildDealPoints([v41], { era: 1, now: NaN })).toEqual([]);
   });
 
-  it('omits uncertain aliases and unverified dated versions', () => {
+  it('omits uncertain aliases, unverified dated versions and the $15 tier', () => {
     const rows = [
       model({ id: 'qwen3-8-flash-next' }),
       model({ id: 'deepseek-v4-flash-0731-reasoning-max-effort' }),
@@ -627,9 +633,8 @@ describe('buildDealPoints', () => {
     ];
 
     expect(buildDealPoints(rows, { era: 1 })).toEqual([]);
-    // ...while the unversioned exact Qwen Max row still maps.
-    const [kept] = buildDealPoints([model({ id: 'qwen3-8-max' })], { era: 1 });
-    expect(kept.deal).toMatchObject({ tier: 15 });
+    // The unversioned Qwen Max row is exact but its $15 tier is not notable.
+    expect(buildDealPoints([model({ id: 'qwen3-8-max' })], { era: 1 })).toEqual([]);
   });
   it('flows through the same filters and frontier as measured points', () => {
     const rows = [
@@ -649,6 +654,88 @@ describe('buildDealPoints', () => {
 
     const frontier = paretoFrontier(filtered, 'time');
     expect(frontier.length).toBeGreaterThan(0);
+  });
+
+  it('omits $15 tier Go estimates: only effective $30/$60 produce deal points', () => {
+    // $15 tier rows must not gain estimate points: the tier is not notable.
+    const cheap15 = [
+      model({ id: 'qwen3-8-max', cost: 2.669985 }),
+      model({ id: 'kimi-k3-low', cost: 0.5 }),
+      model({ id: 'grok-4-7-high', cost: 1.0 }),
+    ];
+
+    expect(buildDealPoints(cheap15, { era: 1 })).toEqual([]);
+
+    // Effective $30/$60 tiers still produce points.
+    const notable = [
+      model({ id: 'qwen3-7-max', cost: 1.147296 }),
+      model({ id: 'glm-5-3-flash', cost: 0.25326 }),
+    ];
+    const points = buildDealPoints(notable, { era: 1 });
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.every((p) => p.deal.tier >= 30)).toBe(true);
+  });
+
+  it('promo reverting to $15 after expiry disappears instead of falling back to a point', () => {
+    const v41 = {
+      id: 'deepseek-v4-1-flash-reasoning-max-effort',
+      name: 'DeepSeek V4.1 Flash (Reasoning, Max Effort)',
+      creator: 'DeepSeek',
+      release: '2026-09-01',
+      iq: 39.5,
+      cost: 0.265225,
+      retired: false,
+      open: true,
+      era: 1,
+      time_sec: 282.36,
+      tps: 232.3,
+      ttft: 0.5,
+    };
+    const before = Date.parse('2026-09-24T00:00:00Z');
+    const after = Date.parse('2026-09-28T00:00:00Z');
+
+    // Active promo ($60) still produces a labeled point.
+    const [promoPoint] = buildDealPoints([v41], { era: 1, now: before });
+    expect(promoPoint.deal.tier).toBe(60);
+    expect(promoPoint.deal.promoActive).toBe(true);
+
+    // Expired promo reverts to the $15 base tier, which is not notable:
+    // no estimate point remains.
+    expect(buildDealPoints([v41], { era: 1, now: after })).toEqual([]);
+    expect(buildDealPoints([v41], { era: 1, now: NaN })).toEqual([]);
+  });
+
+  it('excludes $15 estimates from era domain points and chart domains', () => {
+    const rows = [model({ id: 'qwen3-8-max', era: 1, cost: 2.669985, time_sec: 10, iq: 40 })];
+
+    const points = eraDomainPoints(rows, { era: 1, utilization: 1 });
+    expect(points.map((p) => p.id)).toEqual(['qwen3-8-max']);
+    expect(points.some((p) => p.deal)).toBe(false);
+
+    const domains = eraChartDomains(rows, { era: 1, speedMode: 'time', utilization: 1 });
+    expect(domains.xBounds).toEqual([2.669985, 2.669985]);
+
+    // Expired promo leaves no domain trace either.
+    const v41 = {
+      id: 'deepseek-v4-1-flash-reasoning-max-effort',
+      name: 'DeepSeek V4.1 Flash',
+      creator: 'DeepSeek',
+      release: '2026-09-01',
+      iq: 39.5,
+      cost: 0.265225,
+      retired: false,
+      open: true,
+      era: 1,
+      time_sec: 282.36,
+      tps: 232.3,
+      ttft: 0.5,
+    };
+    const after = Date.parse('2026-09-28T00:00:00Z');
+    expect(eraDomainPoints([v41], { era: 1, now: after }).some((p) => p.deal)).toBe(false);
+  });
+
+  it('pure Go formula still supports $15 math even though deal points skip it', () => {
+    expect(estimateGoCost(0.6, 15)).toBeCloseTo(0.4, 10);
   });
 });
 
@@ -838,5 +925,111 @@ describe('era chart domains keep the grid static', () => {
         { era: 1, speedMode: 'time' },
       ).zMax,
     ).toBeUndefined();
+  });
+});
+
+describe('hover tooltip stays off the dot', () => {
+  it('offsets below-right of the cursor by default instead of centering on the dot', () => {
+    const pos = computeHoverTooltipPosition({
+      cursorX: 100,
+      cursorY: 100,
+      containerWidth: 600,
+      containerHeight: 400,
+      tooltipWidth: 200,
+      tooltipHeight: 120,
+    });
+
+    expect(HOVER_TOOLTIP_OFFSET).toBeGreaterThanOrEqual(10);
+    expect(pos.left).toBe(100 + HOVER_TOOLTIP_OFFSET);
+    expect(pos.top).toBe(100 + HOVER_TOOLTIP_OFFSET);
+    expect(pos.placement).toBe('bottom-right');
+  });
+
+  it('flips left/up near the chart edges and clamps inside the container', () => {
+    const nearRight = computeHoverTooltipPosition({
+      cursorX: 550,
+      cursorY: 100,
+      containerWidth: 600,
+      containerHeight: 400,
+      tooltipWidth: 200,
+      tooltipHeight: 120,
+    });
+    // Tooltip would overflow right: sits left of the cursor with right arrow.
+    expect(nearRight.left).toBeLessThan(550);
+    expect(nearRight.placement).toBe('bottom-left');
+
+    const nearBottom = computeHoverTooltipPosition({
+      cursorX: 100,
+      cursorY: 350,
+      containerWidth: 600,
+      containerHeight: 400,
+      tooltipWidth: 200,
+      tooltipHeight: 120,
+    });
+    expect(nearBottom.top).toBeLessThan(350);
+    expect(nearBottom.placement).toBe('top-right');
+
+    const corner = computeHoverTooltipPosition({
+      cursorX: 595,
+      cursorY: 395,
+      containerWidth: 600,
+      containerHeight: 400,
+      tooltipWidth: 200,
+      tooltipHeight: 120,
+    });
+    expect(corner.left).toBeGreaterThanOrEqual(0);
+    expect(corner.top).toBeGreaterThanOrEqual(0);
+    expect(corner.left + 200).toBeLessThanOrEqual(600);
+    expect(corner.top + 120).toBeLessThanOrEqual(400);
+    expect(corner.placement).toBe('top-left');
+  });
+
+  it('keeps the offset card off the anchor even near edges', () => {
+    // Anchor near the bottom-right corner: card flips top-left but the
+    // diagonal offset keeps the anchor outside the card rect.
+    const anchor = { x: 590, y: 390 };
+    const pos = computeHoverTooltipPosition({
+      cursorX: anchor.x,
+      cursorY: anchor.y,
+      containerWidth: 600,
+      containerHeight: 400,
+      tooltipWidth: 200,
+      tooltipHeight: 120,
+    });
+    const outside =
+      anchor.x < pos.left || anchor.x > pos.left + 200 ||
+      anchor.y < pos.top || anchor.y > pos.top + 120;
+    expect(outside).toBe(true);
+    expect(pos.placement).toBe('top-left');
+  });
+});
+
+describe('resolveHoverAnchor', () => {
+  const rect = { left: 0, top: 0, width: 600, height: 400 };
+
+  it('prefers the event bbox dot anchor over the cursor', () => {
+    const anchor = resolveHoverAnchor(
+      { bbox: { x0: 95, x1: 105, y0: 95, y1: 105 } },
+      rect,
+      { x: 300, y: 200 },
+    );
+
+    expect(anchor).toMatchObject({ x: 100, y: 100, source: 'bbox' });
+  });
+
+  it('converts viewport-absolute bbox via the chart rect', () => {
+    const anchor = resolveHoverAnchor(
+      { bbox: { x0: 195, x1: 205, y0: 145, y1: 155 } },
+      { left: 100, top: 50, width: 600, height: 400 },
+      { x: 300, y: 200 },
+    );
+
+    expect(anchor).toMatchObject({ x: 100, y: 100, source: 'bbox' });
+  });
+
+  it('falls back to cursor without bbox and null when nothing usable', () => {
+    expect(resolveHoverAnchor({ curveNumber: 0, pointNumber: 0 }, rect, { x: 300, y: 200 }))
+      .toMatchObject({ x: 300, y: 200, source: 'cursor' });
+    expect(resolveHoverAnchor({}, rect, null)).toBeNull();
   });
 });

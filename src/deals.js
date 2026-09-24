@@ -25,15 +25,23 @@
  *    limit windows ($10/mo; per-model monthly tier $15/$30/$60 with rolling
  *    5h 20% / weekly 50% / monthly 100%):
  *    https://opencode.ai/docs/go/ (last updated 2026-09-23 per that page)
+ *    Only the notable $30/$60 tiers gain estimate points; the $15 tier is
+ *    omitted as not notable (see `buildDealPoints`).
  *
- * Explicit omissions (no fuzzy matches, no stale promos):
+ * Explicit omissions (no fuzzy matches, no stale promos, no $15 tier):
+ *  - Every $15-tier Go mapping is omitted as not notable: `glm-5-3-max`,
+ *    `kimi-k3-low`/`-max`, `mimo-v2-6-pro`, `mimo-v2-5-pro`, `qwen3-8-max`
+ *    (plus its dated `qwen3-8-max-0902` alias), Grok 4.7/4.6 effort rows,
+ *    GPT-6/GPT-5.6 Luna effort rows, `deepseek-v4-flash-vision-*`, and the
+ *    DeepSeek V4.1 Flash base tier after its $60 promo expires (the promo
+ *    point disappears instead of reverting to $15).
  *  - `qwen3-8-flash-next`: not equated with Go "Qwen3.8 Flash" — the alias
  *    is unverified, so the uncertain mapping is skipped entirely.
  *  - Dated DeepSeek rows (`deepseek-v4-flash-0420-*`, `-0731-*`,
  *    `deepseek-v4-pro-0424-*`, `-0813-*`) and `qwen3-8-max-0902`: only dated
  *    snapshot rows exist, and routing to historic versions is unverified, so
- *    no dated alias maps to a generic Go id. (Unversioned exact rows such as
- *    `qwen3-8-max` map normally.)
+ *    no dated alias maps to a generic Go id. (The unversioned `qwen3-8-max`
+ *    row would map, but its $15 tier is omitted as not notable.)
  *  - `mimo-v2.6-flash`, `minimax-m2.5`, `hy4-preview`: listed by Go but have
  *    no exact row in the measured snapshot, so no estimate is fabricated.
  *  - `qwen3-6-plus`: listed by Go but only present in the archive era of the
@@ -45,11 +53,11 @@
  *  - `qwen3-8-2-4t-a95b`, `muse-spark-1-1-xhigh`, `muse-glimmer-high`: present
  *    in the snapshot but not in the Go model list — never mapped.
  *
- * Effort-mapping assumption: Go lists model families (Grok 4.7/4.6, GPT-6 /
- * GPT-5.6 Luna, Kimi K3, GLM-5.2/5.1) without an effort level, so every
- * current-era snapshot effort row maps explicitly at the family tier on the
- * assumption Go serves those efforts alike. These are estimates, not
- * measured costs.
+ * Effort-mapping assumption: Go lists model families (GLM-5.2/5.1) without
+ * an effort level, so every current-era snapshot effort row maps explicitly
+ * at the family tier on the assumption Go serves those efforts alike. These
+ * are estimates, not measured costs. Former $15 families (Grok 4.7/4.6,
+ * GPT-6 / GPT-5.6 Luna, Kimi K3) are omitted with the tier.
  */
 
 /** Sources reviewed 2026-09-24 against the docs cited in this file. */
@@ -62,8 +70,15 @@ export const DEALS_REFRESH_POLICY =
 /** OpenCode Go subscription price in USD/month (https://opencode.ai/docs/go/). */
 export const GO_SUBSCRIPTION_USD = 10;
 
-/** Per-model monthly quota tiers offered by Go (USD of included usage). */
+/**
+ * Per-model monthly quota tiers offered by Go (USD of included usage).
+ * The pure quota formula supports all three tiers, but deal points only
+ * emit the notable $30/$60 tiers — see `buildDealPoints` in lib.js.
+ */
 export const GO_TIERS = [15, 30, 60];
+
+/** Minimum effective Go tier that gains an estimate point ($15 omitted). */
+export const MIN_NOTABLE_GO_TIER = 30;
 
 /**
  * Meta per-1M-token list prices in USD: Standard vs Contributor.
@@ -122,43 +137,14 @@ export const DEAL_ENTRIES = [
   { snapshotId: 'hy3', goId: 'hy3', kind: 'go', tier: 60 },
   // ---- $30 tier ----
   { snapshotId: 'qwen3-7-max', goId: 'qwen3.7-max', kind: 'go', tier: 30 },
-  // ---- $15 tier ----
-  { snapshotId: 'glm-5-3-max', goId: 'glm-5.3', kind: 'go', tier: 15 },
-  // Go lists "Kimi K3" without effort; both snapshot effort rows map explicitly.
-  { snapshotId: 'kimi-k3-low', goId: 'kimi-k3', kind: 'go', tier: 15 },
-  { snapshotId: 'kimi-k3-max', goId: 'kimi-k3', kind: 'go', tier: 15 },
-  { snapshotId: 'mimo-v2-6-pro', goId: 'mimo-v2.6-pro', kind: 'go', tier: 15 },
-  { snapshotId: 'mimo-v2-5-pro', goId: 'mimo-v2.5-pro', kind: 'go', tier: 15 },
-  // Go lists "Qwen3.8 Max" without a version; only the unversioned exact row
-  // maps — the dated (0902) alias is omitted as unverified.
-  { snapshotId: 'qwen3-8-max', goId: 'qwen3.8-max', kind: 'go', tier: 15 },
-  { snapshotId: 'deepseek-v4-flash-vision-reasoning-max-effort', goId: 'deepseek-v4-flash-vision-exp', kind: 'go', tier: 15 },
-  // Go lists "Grok 4.7" / "Grok 4.6" without effort or context tier; every
-  // current-era snapshot effort row maps explicitly. Peak/off-peak and
-  // context-tier price differences are ignored by the quota formula (noted
-  // as an assumption on every surface).
-  { snapshotId: 'grok-4-7-high', goId: 'grok-4.7', kind: 'go', tier: 15 },
-  { snapshotId: 'grok-4-7-xhigh', goId: 'grok-4.7', kind: 'go', tier: 15 },
-  { snapshotId: 'grok-4-6-high', goId: 'grok-4.6', kind: 'go', tier: 15 },
-  { snapshotId: 'grok-4-6-low', goId: 'grok-4.6', kind: 'go', tier: 15 },
-  { snapshotId: 'grok-4-6-medium', goId: 'grok-4.6', kind: 'go', tier: 15 },
-  { snapshotId: 'grok-4-6-xhigh', goId: 'grok-4.6', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-non-reasoning', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-high', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-low', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-max', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-medium', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-6-luna-xhigh', goId: 'gpt-6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-non-reasoning', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-high', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-low', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-max', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-medium', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
-  { snapshotId: 'gpt-5-6-luna-xhigh', goId: 'gpt-5.6-luna', kind: 'go', tier: 15 },
+  // $15 tier omitted entirely as not notable (no estimate points, no domain
+  // widening). The pure `estimateGoCost` formula still accepts $15 for
+  // general use, but `buildDealPoints` skips any effective tier below $30.
   // DeepSeek V4.1 Flash carries the active 4x promo ($60 tier, ends Sep 27,
   // i.e. expires 2026-09-28T00:00:00Z) over the $15 base tier; the tier is
-  // resolved against the review clock so the current offer is never silently
-  // understated, and the promo is labeled on every surface while active.
+  // resolved against the review clock, and after expiry the point disappears
+  // (no $15 fallback) while the promo is labeled on every surface while
+  // active.
   {
     snapshotId: 'deepseek-v4-1-flash-reasoning-max-effort',
     goId: 'deepseek-v4.1-flash',

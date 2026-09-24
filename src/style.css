@@ -83,6 +83,53 @@ button:hover { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  position: relative;
+}
+.chart-hover-tooltip {
+  position: absolute;
+  z-index: 10;
+  max-width: min(320px, 80%);
+  max-height: min(320px, calc(100% - 28px));
+  overflow-y: auto;
+  background: #1a2130;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.chart-hover-tooltip[hidden] { display: none; }
+.chart-hover-arrow::before {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+.chart-hover-tooltip[data-placement="bottom-right"]::before {
+  top: -6px;
+  left: -6px;
+  transform: rotate(45deg);
+}
+.chart-hover-tooltip[data-placement="bottom-left"]::before {
+  top: -6px;
+  right: -6px;
+  transform: rotate(45deg);
+}
+.chart-hover-tooltip[data-placement="top-right"]::before {
+  bottom: -6px;
+  left: -6px;
+  transform: rotate(225deg);
+}
+.chart-hover-tooltip[data-placement="top-left"]::before {
+  bottom: -6px;
+  right: -6px;
+  transform: rotate(225deg);
 }
 .status { margin: 0 0 0.6rem; font-size: 0.95rem; }
 .status.error { color: var(--danger); }
