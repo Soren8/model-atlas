@@ -27,21 +27,7 @@ const FIXTURE = `
 <input id="hide-retired" type="checkbox" checked />
 <input id="frontier-only" type="checkbox" />
 <button id="reset-camera" type="button"></button>
-<span id="table-count"></span>
-<table id="model-table">
-  <thead><tr>
-    <th data-key="name">Model</th>
-    <th data-key="creator">Provider</th>
-    <th data-key="release">Released</th>
-    <th data-key="iq">Intelligence</th>
-    <th data-key="cost">Cost</th>
-    <th data-key="speed" id="th-speed">Speed</th>
-    <th data-key="tps">tok/s</th>
-    <th data-key="open">Open</th>
-    <th data-key="retired">Status</th>
-  </tr></thead>
-  <tbody id="model-tbody"></tbody>
-</table>`;
+`;
 
 const PAYLOAD = {
   source_url: 'https://example.test/upstream.json',
@@ -68,10 +54,6 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
 });
 
-function rows() {
-  return document.querySelectorAll('#model-tbody tr');
-}
-
 describe('main initialization', () => {
   it('fetches data relative to the deployed page for nested subpaths', async () => {
     await import('./main.js');
@@ -83,24 +65,27 @@ describe('main initialization', () => {
     );
   });
 
-  it('renders counts and table rows on successful startup', async () => {
+  it('renders the 3D chart and counts on successful startup', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
     await import('./main.js');
-    await vi.waitFor(() => expect(rows().length).toBe(2));
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalled());
 
+    expect(Plotly.react.mock.calls.some((call) => call[0] === document.getElementById('chart'))).toBe(true);
     expect(document.getElementById('counts').textContent).toContain('2 plotted');
     expect(document.getElementById('counts').textContent).toContain('2 frontier');
     expect(document.getElementById('asof').textContent).toContain('2026-09-23');
   });
 
-  it('keeps filters and table working when WebGL initialization fails', async () => {
+  it('reports unavailable 3D when WebGL initialization fails', async () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
     Plotly.newPlot.mockRejectedValueOnce(new Error('WebGL unavailable'));
 
     await import('./main.js');
-    await vi.waitFor(() => expect(rows().length).toBe(2));
+    await vi.waitFor(() => expect(document.getElementById('status').textContent).toMatch(/WebGL/i));
 
     expect(document.getElementById('chart').style.display).toBe('none');
     expect(document.getElementById('status').textContent).toMatch(/WebGL/i);
+    expect(document.getElementById('status').textContent).not.toMatch(/table/i);
     expect(document.getElementById('counts').textContent).toContain('2 plotted');
   });
 
@@ -132,7 +117,6 @@ describe('main initialization', () => {
 
     expect(document.getElementById('status').textContent).toMatch(/data/i);
     expect(document.getElementById('status').classList.contains('error')).toBe(true);
-    expect(rows().length).toBe(0);
   });
 
   it('reports HTTP failures with an error status', async () => {
@@ -379,10 +363,6 @@ describe('subscription toggle (Contributor always on)', () => {
 <input id="deals-toggle" type="checkbox" />
 <input id="deals-util" type="number" value="100" />
 <p id="deals-note"></p>`,
-    )
-    .replace(
-      '<th data-key="cost">Cost</th>',
-      '<th data-key="cost">Cost</th><th data-key="deal">Terms</th>',
     );
 
   const DEALS_PAYLOAD = {
@@ -443,13 +423,7 @@ describe('subscription toggle (Contributor always on)', () => {
     });
     expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
     expect(document.getElementById('counts').textContent).not.toContain('subscription estimates');
-    const terms = [...document.querySelectorAll('#model-tbody tr')].map(
-      (tr) => tr.cells[5].textContent,
-    );
-    // 3 measured rows plus the always-on Contributor repricing.
-    expect(terms).toHaveLength(4);
-    expect(new Set(terms)).toEqual(new Set(['Measured', 'Contributor est.']));
-    expect(terms).not.toContain('Go $60 quota-equiv est.');
+    expect(contributor.text.join('\n')).toContain('Contributor token rates');
   });
 
   it('adds separately labeled subscription estimates when toggled on, keeping max measured-only', async () => {
@@ -494,11 +468,8 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
     expect(document.getElementById('counts').textContent).toContain('subscription estimates');
 
-    const bodyText = document.getElementById('model-tbody').textContent;
-    expect(bodyText).toContain('Contributor est.');
-    expect(bodyText).toContain('Go $60 quota-equiv est.');
-    expect(bodyText).toContain('compounded');
-    expect(bodyText).toContain('Measured');
+    expect(go.text.join('\n')).toContain('Quota-equiv');
+    expect(go.text.join('\n')).toContain('Contributor via Go');
     expect(document.getElementById('deals-note').textContent).toContain('2026-09-24');
     expect(document.getElementById('deals-note').textContent).toContain('always on');
   });
@@ -521,26 +492,19 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(contributor.x).toHaveLength(1);
   });
 
-  it('keeps Contributor rows always on and subscription rows after toggle through re-sorting', async () => {
+  it('keeps Contributor and subscription estimates in the 3D chart after toggling', async () => {
     useDealsDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
     await vi.waitFor(() => expect(mainCount(Plotly)).toBe(1));
-    // Contributor is already in the table before the subscription toggle.
-    expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
+    expect(contributorTrace(Plotly)).toBeDefined();
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
     await vi.waitFor(() => expect(mainCount(Plotly)).toBe(2));
-    expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
-
-    document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
-      new Event('click', { bubbles: true }),
-    );
-
-    expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
-    expect(document.getElementById('model-tbody').textContent).toContain('Go $60 quota-equiv est.');
+    expect(contributorTrace(Plotly)).toBeDefined();
+    expect(goTrace(Plotly)).toBeDefined();
   });
 
   it('plots each subscription offer in its own trace with lab colors and proxy hover text', async () => {
@@ -605,10 +569,9 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(allOfferText).toContain('lab-wide workload proxy');
     expect(data.find((t) => t.name === 'Models')).toBeDefined();
 
-    const bodyText = document.getElementById('model-tbody').textContent;
-    expect(bodyText).toContain('Claude Max $200 ~40x est.');
-    expect(bodyText).toContain('ChatGPT Pro/Codex $200 ~70x est.');
-    expect(bodyText).toContain('Cursor Ultra $200 ~2x est.');
+    expect(lastCall(Plotly)[1].some((trace) => trace.name === 'Claude Max $200 ~40x est.')).toBe(true);
+    expect(lastCall(Plotly)[1].some((trace) => trace.name === 'ChatGPT Pro/Codex $200 ~70x est.')).toBe(true);
+    expect(lastCall(Plotly)[1].some((trace) => trace.name === 'Cursor Ultra $200 ~2x est.')).toBe(true);
     expect(document.getElementById('counts').textContent).toContain('subscription estimates');
   });
 });
@@ -1228,6 +1191,41 @@ describe('camera persistence', () => {
   };
   const DEFAULT_EYE = { x: 1.7, y: -1.5, z: 0.9 };
 
+  it('keeps axis names on visible corners while zoomed and restores Plotly titles on reset', async () => {
+    const handlers = captureHandlers();
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
+    const wrap = document.querySelector('.chart-wrap');
+    expect(wrap.querySelector('[data-axis="x"]').hidden).toBe(true);
+
+    handlers.plotly_relayout({ 'scene.camera': { eye: { x: 0.5, y: -0.4, z: 0.3 } } });
+
+    const x = wrap.querySelector('[data-axis="x"]');
+    const y = wrap.querySelector('[data-axis="y"]');
+    const z = wrap.querySelector('[data-axis="z"]');
+    expect([x.hidden, y.hidden, z.hidden]).toEqual([false, false, false]);
+    expect(x.textContent).toContain('Cost per task');
+    expect(y.textContent).toContain('Time per task');
+    expect(z.textContent).toBe('Intelligence index');
+    expect([x.dataset.side, y.dataset.side, z.dataset.side]).toEqual(['left', 'right', 'right']);
+    expect(Plotly.relayout).toHaveBeenCalledWith(document.getElementById('chart'), {
+      'scene.xaxis.title.text': '',
+      'scene.yaxis.title.text': '',
+      'scene.zaxis.title.text': '',
+    });
+
+    handlers.plotly_relayout({ 'scene.camera.eye.y': 0.4, 'scene.camera.eye.x': -0.5 });
+    expect([x.dataset.side, y.dataset.side, z.dataset.side]).toEqual(['right', 'left', 'left']);
+
+    document.getElementById('reset-camera').click();
+    expect([x.hidden, y.hidden, z.hidden]).toEqual([true, true, true]);
+    expect(Plotly.relayout).toHaveBeenCalledWith(document.getElementById('chart'), expect.objectContaining({
+      'scene.zaxis.title.text': 'Intelligence index',
+    }));
+  });
+
   function mainCalls(Plotly) {
     const chart = document.getElementById('chart');
     return Plotly.react.mock.calls.filter((c) => c[0] === chart);
@@ -1497,7 +1495,7 @@ describe('camera persistence', () => {
     expect(onCalls).toBe(wiredCalls);
   });
 
-  it('keeps the camera stable across sort and resize without extra resets', async () => {
+  it('keeps the camera stable across resize without extra resets', async () => {
     const handlers = captureHandlers();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
@@ -1506,15 +1504,12 @@ describe('camera persistence', () => {
 
     dragTo(handlers);
     // Drag schedules the overlay camera sync via RAF: let it land before
-    // baselining so sort/resize are measured without the pending drag sync.
+    // baselining so resize is measured without the pending drag sync.
     await new Promise((r) => setTimeout(r, 60));
     const mainsBefore = mainCalls(Plotly).length;
     const relayoutsBefore = Plotly.relayout.mock.calls.length;
     const resizesBefore = Plotly.Plots.resize.mock.calls.length;
 
-    document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
-      new Event('click', { bubbles: true }),
-    );
     window.dispatchEvent(new Event('resize'));
     await new Promise((r) => setTimeout(r, 50));
 
@@ -1843,8 +1838,8 @@ describe('overlay pointer isolation and geometry', () => {
     expect(css).toMatch(/\.chart-box-overlay\s*\{[^}]*inset\s*:\s*0/s);
     // Desktop heights match; mobile media sets the wrapper (chart follows
     // at 100%) so they cannot drift apart.
-    expect(css).toMatch(/\.chart-wrap\s*\{[^}]*height\s*:\s*min\(72vh,\s*640px\)/s);
-    expect(css).toMatch(/@media[^{]*max-width\s*:\s*640px[\s\S]*\.chart-wrap\s*\{[^}]*height\s*:\s*70vh/s);
+    expect(css).toMatch(/\.chart-wrap\s*\{[^}]*height\s*:\s*min\(108vh,\s*960px\)/s);
+    expect(css).toMatch(/@media[^{]*max-width\s*:\s*640px[\s\S]*\.chart-wrap\s*\{[^}]*height\s*:\s*105vh/s);
     expect(css).toMatch(/@media[^{]*max-width\s*:\s*640px[\s\S]*\.chart-wrap\s+\.chart\s*\{[^}]*height\s*:\s*100%/s);
 
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
@@ -1929,7 +1924,7 @@ describe('exclude $200+ tiers', () => {
     return lastData(Plotly).find((t) => t.name === name);
   }
 
-  it('hides $200 plans by default while keeping Go and Contributor across chart, table, frontier and sort', async () => {
+  it('hides $200 plans by default while keeping Go and Contributor in chart and frontier', async () => {
     document.body.innerHTML = EXCLUDE_FIXTURE;
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MIXED_PAYLOAD });
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
@@ -1964,24 +1959,9 @@ describe('exclude $200+ tiers', () => {
     // Contributor always on is unaffected.
     expect(trace(Plotly, 'Contributor (estimates)').x).toHaveLength(1);
 
-    const bodyText = document.getElementById('model-tbody').textContent;
-    expect(bodyText).toContain('Contributor est.');
-    expect(bodyText).toContain('Go $60 quota-equiv est.');
-    expect(bodyText).not.toContain('Claude Max $200');
-    expect(bodyText).toContain('Claude Pro $20 ~20x est.');
-    expect(bodyText).toContain('ChatGPT Plus/Codex $20 ~35x est.');
-    expect(bodyText).not.toContain('ChatGPT Pro/Codex $200');
-    expect(bodyText).not.toContain('Cursor Ultra $200');
     expect(document.getElementById('counts').textContent).toContain('subscription estimates');
-
-    // Table re-sort keeps the exclusion (no hidden $200 rows reappear).
-    document.querySelector('#model-table th[data-key="iq"]').dispatchEvent(
-      new Event('click', { bubbles: true }),
-    );
-    const sortedText = document.getElementById('model-tbody').textContent;
-    expect(sortedText).toContain('Go $60 quota-equiv est.');
-    expect(sortedText).not.toContain('Claude Max $200');
-    expect(sortedText).not.toContain('Cursor Ultra $200');
+    expect(trace(Plotly, 'Claude Pro $20 ~20x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'ChatGPT Plus/Codex $20 ~35x est.')?.x).toHaveLength(1);
     expect(mainCalls(Plotly).length).toBe(2);
   });
 
@@ -2052,12 +2032,11 @@ describe('exclude $200+ tiers', () => {
     await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(3));
     expect(boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner').x).toEqual(beforeBox.x);
 
-    const bodyText = document.getElementById('model-tbody').textContent;
-    expect(bodyText).toContain('Claude Max $200 ~40x est.');
-    expect(bodyText).toContain('Claude Pro $20 ~20x est.');
-    expect(bodyText).toContain('ChatGPT Plus/Codex $20 ~35x est.');
-    expect(bodyText).toContain('ChatGPT Pro/Codex $200 ~70x est.');
-    expect(bodyText).toContain('Cursor Ultra $200 ~2x est.');
+    expect(trace(Plotly, 'Claude Max $200 ~40x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'Claude Pro $20 ~20x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'ChatGPT Plus/Codex $20 ~35x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')?.x).toHaveLength(1);
+    expect(trace(Plotly, 'Cursor Ultra $200 ~2x est.')?.x).toHaveLength(3);
   });
 });
 
@@ -2074,7 +2053,7 @@ describe('provider All selection without ctrl', () => {
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
-    await vi.waitFor(() => expect(rows().length).toBe(2));
+    await vi.waitFor(() => expect(providerOptions().length).toBeGreaterThan(1));
 
     const opts = providerOptions();
     expect(opts.length).toBeGreaterThan(1);
@@ -2128,13 +2107,13 @@ describe('provider All selection without ctrl', () => {
 
   it('keeps other selections when All lands selected alongside them', async () => {
     await import('./main.js');
-    await vi.waitFor(() => expect(rows().length).toBe(2));
+    await vi.waitFor(() => expect(providerOptions().length).toBeGreaterThan(1));
 
     // Keyboard/shift multi-select can leave All flagged with others: All yields.
     const provider = document.getElementById('provider');
     for (const o of provider.options) o.selected = o.value === '' || o.value === 'Acme';
     provider.dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.waitFor(() => expect(rows().length).toBe(2));
+    await vi.waitFor(() => expect(providerOptions().length).toBeGreaterThan(1));
 
     const opts = providerOptions();
     expect(opts.find((o) => o.value === 'Acme').selected).toBe(true);
@@ -2308,12 +2287,11 @@ describe('archive era with historical speed', () => {
     // Archive rows are all retired-today but were live historically: shown.
     expect(document.getElementById('hide-retired').checked).toBe(false);
     expect(document.getElementById('counts').textContent).toContain('2 plotted');
-    expect(document.getElementById('model-tbody').textContent).toContain('Old A');
     const data = lastData(Plotly);
     expect(data.some((t) => (t.text ?? []).join('\n').includes('Old A'))).toBe(true);
   });
 
-  it('labels archived speed with its observation date in hover and table', async () => {
+  it('labels archived speed with its observation date in hover', async () => {
     useArchiveDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
     const hoverHandlers = {};
@@ -2348,7 +2326,6 @@ describe('archive era with historical speed', () => {
     hoverHandlers['plotly_hover']({ points: [{ curveNumber, pointNumber }] });
     const tip = document.getElementById('chart-hover-tooltip');
     expect(tip.innerHTML).toContain('2026-08-21');
-    expect(document.getElementById('model-tbody').textContent).toContain('2026-08-21');
   });
 
   it('disables throughput without measurements and returns to time on archive select', async () => {
@@ -2400,7 +2377,6 @@ describe('archive era with historical speed', () => {
     // No stale "predates speed" wording: the era has times, only throughput is missing.
     expect(document.getElementById('status').textContent).not.toMatch(/predates/i);
     expect(document.getElementById('status').textContent).toMatch(/throughput/i);
-    // Cost and intelligence stay listed.
-    expect(document.getElementById('model-tbody').textContent).toContain('Old A');
+    expect(lastData(Plotly)).toEqual([]);
   });
 });

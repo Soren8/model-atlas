@@ -84,33 +84,6 @@
         </p>
       </section>
 
-      <section class="table-section" aria-label="Model table">
-        <h2>Models <span class="dim" id="table-count"></span></h2>
-        <p class="hint dim">
-          Full data table (screen-reader and no-WebGL friendly). Sorting follows the
-          active speed metric; click a header to sort.
-        </p>
-        <div class="table-wrap">
-          <table id="model-table">
-            <thead>
-              <tr>
-                <th data-key="name" scope="col">Model</th>
-                <th data-key="creator" scope="col">Provider</th>
-                <th data-key="release" scope="col">Released</th>
-                <th data-key="iq" scope="col">Intelligence</th>
-                <th data-key="cost" scope="col">Cost / task</th>
-                <th data-key="deal" scope="col">Terms</th>
-                <th data-key="speed" scope="col" id="th-speed">Time / task</th>
-                <th data-key="tps" scope="col">tok/s</th>
-                <th data-key="open" scope="col">Open</th>
-                <th data-key="retired" scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody id="model-tbody"></tbody>
-          </table>
-        </div>
-      </section>
-
       <footer class="methodology" aria-label="Methodology and attribution">
         <h2>Methodology &amp; data</h2>
         <ul>
@@ -123,7 +96,7 @@
             Speed is the measured end-to-end time per task (output speed, time to
             first token, reasoning length and provider queueing combined).
             Archive-era times are the latest in-era dated measurements from the
-            upstream history (hover/table show each observation date); they are
+            upstream history (hover shows each observation date); they are
             sparse and not synchronized to the snapshot date, and throughput
             was never recorded for those rows.
           </li>

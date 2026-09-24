@@ -97,6 +97,8 @@ readable by the unprivileged nginx process.
   hover. Both layers share the same camera, ranges, margins and cube aspect,
   synced on rotate/pan/zoom, reset, filtering, empty states and resize via
   public react/relayout/resize only — no private pick patching.
+- Zooming into the scene moves axis names to visible chart corners; reset
+  restores Plotly's axis titles.
 - The intelligence axis tops out at the highest score in the selected era, holding steady across search, provider, and frontier filters.
 - The provider filter opens on **All providers** (no filtering); single-click
   any provider to filter, click again to release it — no ctrl key needed —
@@ -104,13 +106,13 @@ readable by the unprivileged nginx process.
   keeps valid picks and drops stale ones.
 - The archive era (v4.1, before 2026-09-05) plots historical speed: 33 of its
   36 rows carry the latest in-era dated time measurement from the upstream
-  history (observation dates in hover/table; throughput was never recorded
+  history (observation dates in hover; throughput was never recorded
   there, so the throughput metric is disabled and the view falls back to
   time). Those rows read retired today — current status, not historical
   availability — so selecting the archive reveals them instead of hiding them.
   Archived times are sparse and not synchronized to the snapshot date.
 - Camera is sticky: rotate/zoom/pan persists across search, provider,
-  open/retired, frontier, subscription, utilization, speed, era, sorting,
+  open/retired, frontier, subscription, utilization, speed, and era,
   resize and empty states; only Reset camera restores the default view.
 - The Intelligence Index is one aggregate — models with equal scores can differ
   per task — and the evaluation suite is reasoning-heavy, so chat workloads
@@ -132,7 +134,7 @@ measured cost repriced at Contributor rates ($0.15/$1.25/$4.25 perM vs
 $0.002/$0.10/$0.20 cached/input/output) under an assumed 7:2:1 mix
 (.0414/.78, no per-task token counts published); intelligence/speed are
 inherited benchmark values, never provider-measured and never labeled
-measured. Hover/table terms say `Contributor est.` with the assumption.
+measured. Hover text identifies the Contributor estimate and its assumption.
 Muse Spark 1.3 (xhigh) and 1.2 (xhigh) only — `(max)` is Standard-only and
 stays measured-only.
 

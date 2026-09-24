@@ -12,8 +12,6 @@ import {
   PREFERRED_CORNER_NAME,
   buildContributorPoints,
   buildSubscriptionPoints,
-  dealLabel,
-  dealAssumption,
   parseUtilizationPercent,
   eraDomainPoints,
   eraChartDomains,
@@ -98,6 +96,7 @@ function applyCameraEvent(eventData) {
 function handleCameraEvent(eventData) {
   if (!applyCameraEvent(eventData)) return;
   scheduleBoxCameraSync();
+  syncZoomAxisLabels();
 }
 
 function wireCamera() {
@@ -128,9 +127,6 @@ const els = {
   dealsUtil: document.getElementById('deals-util'),
   dealsNote: document.getElementById('deals-note'),
   resetCamera: document.getElementById('reset-camera'),
-  tbody: document.getElementById('model-tbody'),
-  tableCount: document.getElementById('table-count'),
-  thSpeed: document.getElementById('th-speed'),
 };
 
 const state = {
@@ -151,8 +147,6 @@ const state = {
   // estimates by monthly plan fee (Go stays: $10/mo plan, quota ≠ fee).
   excludeHighTiers: true,
   utilization: 1,
-  sortKey: 'iq',
-  sortDir: -1,
   webgl: true,
 };
 
@@ -180,6 +174,64 @@ function ensureChartWrap() {
   parent.insertBefore(wrap, els.chart);
   wrap.appendChild(els.chart);
   return wrap;
+}
+
+function zoomedIntoScene(camera) {
+  const eye = camera?.eye;
+  if (![eye?.x, eye?.y, eye?.z].every(Number.isFinite)) return false;
+  const distance = Math.hypot(eye.x, eye.y, eye.z);
+  const initial = Math.hypot(DEFAULT_CAMERA.eye.x, DEFAULT_CAMERA.eye.y, DEFAULT_CAMERA.eye.z);
+  return distance < initial * 0.75;
+}
+
+function axisTitles(subscriptionOn = state.dealsEnabled) {
+  const scaleWord = state.logScale ? 'log' : 'linear';
+  const mode = SPEED_MODES[state.speedMode];
+  return {
+    x: subscriptionOn
+      ? `Cost per task, USD (${scaleWord}; Contributor + subscription estimates)`
+      : `Cost per task, USD (${scaleWord}; Contributor estimates)`,
+    y: state.speedMode === 'time'
+      ? `Time per task, s (${scaleWord}, lower is better)`
+      : `Throughput, tok/s (${scaleWord}, higher is better)`,
+    z: 'Intelligence index',
+    yColor: mode.lowerIsBetter ? '#9aa4b5' : '#80ed99',
+  };
+}
+
+function syncZoomAxisLabels(relayout = true) {
+  if (!state.webgl) return;
+  const wrap = chartWrap();
+  if (wrap === els.chart) return;
+  const camera = storedCamera ?? DEFAULT_CAMERA;
+  const zoomed = zoomedIntoScene(camera);
+  const wasZoomed = wrap.dataset.zoomAxisLabels === '1';
+  const titles = axisTitles();
+  for (const axis of ['x', 'y', 'z']) {
+    let label = wrap.querySelector(`.zoom-axis-label[data-axis="${axis}"]`);
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'zoom-axis-label';
+      label.dataset.axis = axis;
+      wrap.appendChild(label);
+    }
+    label.textContent = titles[axis];
+    label.hidden = !zoomed;
+    if (axis === 'x') label.dataset.side = camera.eye.y < 0 ? 'left' : 'right';
+    if (axis === 'y') label.dataset.side = camera.eye.y < 0 ? 'right' : 'left';
+    if (axis === 'z') label.dataset.side = camera.eye.x < 0 ? 'left' : 'right';
+  }
+  wrap.dataset.zoomAxisLabels = zoomed ? '1' : '0';
+  if (relayout && zoomed !== wasZoomed) {
+    try {
+      const p = Plotly.relayout(els.chart, {
+        'scene.xaxis.title.text': zoomed ? '' : titles.x,
+        'scene.yaxis.title.text': zoomed ? '' : titles.y,
+        'scene.zaxis.title.text': zoomed ? '' : titles.z,
+      });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
+  }
 }
 
 function ensureBoxLayer() {
@@ -505,7 +557,7 @@ function ensureHoverTooltip() {
     hoverTip.dataset.placement = 'bottom-right';
     hoverTip.hidden = true;
     hoverTip.setAttribute('aria-hidden', 'true');
-    // Never intercepts hover; screen-reader users use the data table.
+    // Never intercepts hover.
     hoverTip.style.pointerEvents = 'none';
     host.appendChild(hoverTip);
   } else {
@@ -590,18 +642,9 @@ function wireHoverTooltip() {
 }
 
 function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
-  const mode = SPEED_MODES[state.speedMode];
-  const scaleWord = state.logScale ? 'log' : 'linear';
+  const titles = axisTitles(subscriptionOn);
+  const zoomed = zoomedIntoScene(camera ?? storedCamera ?? DEFAULT_CAMERA);
   const axisType = state.logScale ? 'log' : 'linear';
-  const yTitle =
-    state.speedMode === 'time'
-      ? `Time per task, s (${scaleWord}, lower is better)`
-      : `Throughput, tok/s (${scaleWord}, higher is better)`;
-  // Contributor estimates are always plotted (distinct token tariff); the
-  // subscription toggle only adds subscription estimates on top.
-  const xTitle = subscriptionOn
-    ? `Cost per task, USD (${scaleWord}; Contributor + subscription estimates)`
-    : `Cost per task, USD (${scaleWord}; Contributor estimates)`;
   return {
     autosize: true,
     margin: { l: 0, r: 0, t: 30, b: 0 },
@@ -621,21 +664,21 @@ function layout(zMax, subscriptionOn = false, xRange, yRange, camera) {
       xaxis: {
         // Plotly gl3d scene axes require the object form; a plain string
         // renders the literal axis name ("x"/"z").
-        title: { text: xTitle },
+        title: { text: zoomed ? '' : titles.x },
         type: axisType,
         color: '#9aa4b5',
         gridcolor: '#263042',
         ...(xRange === undefined ? {} : { range: xRange }),
       },
       yaxis: {
-        title: { text: yTitle, font: { color: mode.lowerIsBetter ? '#9aa4b5' : '#80ed99' } },
+        title: { text: zoomed ? '' : titles.y, font: { color: titles.yColor } },
         type: axisType,
         color: '#9aa4b5',
         gridcolor: '#263042',
         ...(yRange === undefined ? {} : { range: yRange }),
       },
       zaxis: {
-        title: { text: 'Intelligence index' },
+        title: { text: zoomed ? '' : titles.z },
         color: '#9aa4b5',
         gridcolor: '#263042',
         ...(zMax === undefined ? {} : { range: [0, zMax] }),
@@ -781,16 +824,9 @@ async function render() {
   const eraModels = state.payload.models.filter((m) => m.era === state.era);
   const combined = combinedModels();
   const base = filterModels(combined, currentFilters());
-  const tableBase = filterModels(combined, {
-    ...currentFilters(),
-    requireSpeed: false,
-  });
   const frontier = paretoFrontier(base, state.speedMode);
   const frontierIds = new Set(frontier.map((m) => m.id));
   const shown = state.frontierOnly ? base.filter((m) => frontierIds.has(m.id)) : base;
-  const tableShown = state.frontierOnly
-    ? tableBase.filter((m) => frontierIds.has(m.id))
-    : tableBase;
   const colors = buildProviderColors(eraModels.map((m) => m.creator));
   // Fixed grid: domains span the full era population (measured plus eligible
   // Contributor and Go estimates at the active utilization, including
@@ -816,24 +852,20 @@ async function render() {
   const xRange = domains.xRange;
   const yRange = domains.yRange;
 
-  // Counts and the data table always update, even when WebGL is unavailable.
+  // Counts always update, even when WebGL is unavailable.
   const live = eraModels.filter((m) => !m.retired).length;
   const nContributor = shown.filter((m) => m.deal?.kind === 'contributor').length;
   const nSubscription = shown.filter((m) => m.deal && m.deal.kind !== 'contributor').length;
   els.counts.textContent =
-    `${shown.length} plotted · ${tableBase.length} in era (${live} live) · ${frontier.length} frontier` +
+    `${shown.length} plotted · ${eraModels.length} in era (${live} live) · ${frontier.length} frontier` +
     ` · ${nContributor} Contributor estimates` +
     (state.dealsEnabled ? ` · ${nSubscription} subscription estimates` : '');
-  renderTable(tableShown, frontierIds);
   if (!state.webgl) return;
+  syncZoomAxisLabels(false);
 
   if (!shown.length) {
     const modeLabel = SPEED_MODES[state.speedMode]?.label ?? 'Speed';
-    setStatus(
-      tableShown.length
-        ? `No plotted points for ${modeLabel} in this era (no ${modeLabel.toLowerCase()} measurements under the current filters). Cost and intelligence are still listed below.`
-        : 'No models match the current filters. Loosen the search or provider selection.',
-    );
+    setStatus(`No plotted points for ${modeLabel} in this era. Loosen the search or provider selection.`);
     // Empty views keep the fixed era grid (no misleading box) so the empty
     // state stays accurate while the axes do not rescale. Camera persists.
     lastTraceData = [];
@@ -856,7 +888,7 @@ async function render() {
       state.webgl = false;
       els.chart.style.display = 'none';
       setStatus(
-        'Interactive 3D is unavailable in this browser (WebGL failed). The full data table below remains available.',
+        'Interactive 3D is unavailable in this browser (WebGL failed). Enable WebGL to view the chart.',
         true,
       );
       return;
@@ -881,50 +913,6 @@ async function render() {
       }
     } catch {}
   }
-}
-
-function renderTable(shown, frontierIds) {
-  const key = state.sortKey;
-  const dir = state.sortDir;
-  const val = (m) => {
-    if (key === 'deal') return dealLabel(m.deal);
-    if (key === 'speed') return speedValue(m);
-    if (key === 'open' || key === 'retired') return m[key] ? 1 : 0;
-    return m[key];
-  };
-  const rows = [...shown].sort((a, b) => {
-    const va = val(a);
-    const vb = val(b);
-    if (va == null) return 1;
-    if (vb == null) return -1;
-    if (typeof va === 'string') return dir * va.localeCompare(vb);
-    return dir * (va - vb);
-  });
-  els.tableCount.textContent = `(${rows.length})`;
-  els.thSpeed.textContent = state.speedMode === 'time' ? 'Time / task' : 'Throughput';
-  els.tbody.innerHTML = rows
-    .map((m) => {
-      const speedObserved = state.speedMode === 'time' && m.time_sec != null && m.time_observed
-        ? ` (${m.time_observed})`
-        : '';
-      const speedTitle = speedObserved
-        ? `Archived speed measurement observed ${m.time_observed}; archived times are sparse and not synchronized to the snapshot date.`
-        : '';
-      const speed =
-        state.speedMode === 'time'
-          ? m.time_sec == null ? 'n/a' : `${formatNum(m.time_sec)} s${speedObserved}`
-          : m.tps == null ? 'n/a' : `${formatNum(m.tps)} tok/s`;
-      const terms = dealLabel(m.deal);
-      return `<tr class="${frontierIds.has(m.id) ? 'frontier-row' : ''}${m.deal ? ' deal-row' : ''}">` +
-        `<td>${escapeHtml(m.name)}</td><td>${escapeHtml(m.creator)}</td>` +
-        `<td class="num">${escapeHtml(m.release)}</td><td class="num">${formatNum(m.iq)}</td>` +
-        `<td class="num">${formatUsd(m.cost)}</td>` +
-        `<td title="${escapeHtml(dealAssumption(m.deal))}">${escapeHtml(terms)}</td>` +
-        `<td class="num"${speedTitle ? ` title="${escapeHtml(speedTitle)}"` : ''}>${escapeHtml(speed)}</td>` +
-        `<td class="num">${m.tps == null ? 'n/a' : formatNum(m.tps)}</td>` +
-        `<td>${m.open ? 'yes' : 'no'}</td><td>${m.retired ? 'retired' : 'live'}</td></tr>`;
-    })
-    .join('');
 }
 
 function buildEraOptions() {
@@ -1002,8 +990,7 @@ function buildProviderOptions() {
     query: '',
     openOnly: false,
     includeRetired: true,
-    // List every era provider even without the active speed metric so
-    // table-only rows (e.g. archive models missing throughput) stay selectable.
+    // List every era provider even without the active speed metric.
     requireSpeed: false,
   });
   const summary = providerSummary(eraModels);
@@ -1102,6 +1089,7 @@ function wireControls() {
   });
   els.resetCamera.addEventListener('click', () => {
     storedCamera = cloneCamera(DEFAULT_CAMERA);
+    syncZoomAxisLabels();
     if (state.webgl) {
       try {
         const p = Plotly.relayout(els.chart, { 'scene.camera': cloneCamera(DEFAULT_CAMERA) });
@@ -1114,35 +1102,6 @@ function wireControls() {
         }
       } catch {}
     }
-  });
-  document.querySelectorAll('#model-table th').forEach((th) => {
-    th.tabIndex = 0;
-    const activate = () => {
-      const k = th.dataset.key;
-      if (state.sortKey === k) state.sortDir *= -1;
-      else {
-        state.sortKey = k;
-        state.sortDir = k === 'name' || k === 'creator' ? 1 : -1;
-      }
-      const tableBase = filterModels(combinedModels(), {
-        ...currentFilters(),
-        requireSpeed: false,
-      });
-      const base = filterModels(combinedModels(), currentFilters());
-      const frontier = paretoFrontier(base, state.speedMode);
-      const frontierIds = new Set(frontier.map((m) => m.id));
-      const tableShown = state.frontierOnly
-        ? tableBase.filter((m) => frontierIds.has(m.id))
-        : tableBase;
-      renderTable(tableShown, frontierIds);
-    };
-    th.addEventListener('click', activate);
-    th.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        activate();
-      }
-    });
   });
   window.addEventListener('resize', () => {
     if (!state.webgl || !state.payload) return;
@@ -1220,7 +1179,7 @@ async function init() {
     state.webgl = false;
     els.chart.style.display = 'none';
     setStatus(
-      'Interactive 3D is unavailable in this browser (WebGL failed). The full data table below remains available.',
+      'Interactive 3D is unavailable in this browser (WebGL failed). Enable WebGL to view the chart.',
       true,
     );
   }
