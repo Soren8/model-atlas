@@ -58,10 +58,6 @@ readable by the unprivileged nginx process.
   well-formed rows), normalizes into `public/data/models.json` with an atomic
   write, preserves the previous snapshot on any failure, and only commits when
   measurements actually changed (`fetched_at` alone never causes churn).
-- **Pages deploy** (`.github/workflows/pages.yml`, optional): builds with Vite
-  inside Docker and deploys `dist/` to GitHub Pages on pushes to `main`, manual dispatch,
-  and successful data refreshes. Enable once under
-  Settings → Pages → Source: “GitHub Actions”.
 
 ## Methodology and limits
 
