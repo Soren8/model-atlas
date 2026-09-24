@@ -78,8 +78,8 @@ button:hover { border-color: var(--accent); }
 .chart-wrap {
   position: relative;
   width: 100%;
-  height: min(72vh, 640px);
-  min-height: 380px;
+  height: min(108vh, 960px);
+  min-height: 570px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -87,8 +87,8 @@ button:hover { border-color: var(--accent); }
 }
 .chart {
   width: 100%;
-  height: min(72vh, 640px);
-  min-height: 380px;
+  height: min(108vh, 960px);
+  min-height: 570px;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -187,7 +187,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   main { padding: 0.75rem 1rem 2.5rem; }
   .control-group { min-width: 100%; }
   select[multiple] { width: 100%; }
-  .chart-wrap { height: 70vh; min-height: 320px; }
-  .chart { height: 70vh; min-height: 320px; }
+  .chart-wrap { height: 105vh; min-height: 480px; }
+  .chart { height: 105vh; min-height: 480px; }
   .chart-wrap .chart { height: 100%; min-height: 0; }
 }
