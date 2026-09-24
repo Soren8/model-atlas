@@ -47,10 +47,10 @@ readable by the unprivileged nginx process.
 
 - **VPS image** (`.github/workflows/docker-build-push.yml`): after tests pass,
   builds `linux/amd64` inside Docker and publishes
-  `malakar2/model-atlas:latest` plus a commit tag to Docker Hub. Configure
-  `DOCKERHUB_USERNAME=malakar2` and `DOCKERHUB_TOKEN` as Actions secrets in
-  this repository before publishing. Refresh commits also trigger a new image
-  build; the sibling `iac` repository deploys it.
+  `ghcr.io/soren8/model-atlas:latest` plus a commit tag to GHCR using the
+  built-in `GITHUB_TOKEN`. Make the container package public after its first
+  publish so the VPS can pull it without credentials. Refresh commits also
+  trigger a new image build; the sibling `iac` repository deploys it.
 
 - **Data refresh** (`.github/workflows/refresh.yml`): runs every 6 hours and on
   manual dispatch. It fetches the upstream JSON instead of rescraping
