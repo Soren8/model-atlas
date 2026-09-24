@@ -10,16 +10,21 @@ describe('site chrome', () => {
     expect(html).toMatch(/<link[^>]+rel=["']icon["'][^>]*href=["']data:/);
   });
 
-  it('exposes the off-by-default subscription toggle with quota-use control and methodology', () => {
+  it('exposes the off-by-default subscription toggle with use control and methodology', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf-8');
 
     expect(html).toMatch(/id=["']deals-toggle["']/);
     expect(html).toMatch(/id=["']deals-util["']/);
     expect(html).not.toMatch(/id=["']deals-toggle["'][^>]*checked/);
-    expect(html).toMatch(/Subscription estimates \(Go only\)/);
+    expect(html).toMatch(/Subscription estimates/);
+    expect(html).not.toMatch(/Go only/);
     expect(html).not.toMatch(/Deals \(estimates\)/);
     expect(html).toMatch(/Contributor \(always on\)/);
     expect(html).toMatch(/quota-equiv/);
+    expect(html).toMatch(/Claude Max \$200 ~40x est\./);
+    expect(html).toMatch(/ChatGPT Pro\/Codex \$200 ~70x est\./);
+    expect(html).toMatch(/Cursor Ultra \$200 ~2x est\./);
+    expect(html).toMatch(/lab-wide workload proxy/);
     expect(html).toMatch(/2026-09-24/);
   });
 

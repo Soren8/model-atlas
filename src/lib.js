@@ -15,6 +15,16 @@ import {
   GO_SUBSCRIPTION_USD,
   GO_TIERS,
   MIN_NOTABLE_GO_TIER,
+  CLAUDE_MAX_FEE_USD,
+  CLAUDE_MAX_MULTIPLIER,
+  CODEX_FEE_USD,
+  CODEX_MULTIPLIER,
+  CURSOR_ULTRA_FEE_USD,
+  CURSOR_ULTRA_POOL_USD,
+  CURSOR_ULTRA_MULTIPLIER,
+  isClaudeMaxEligible,
+  isCodexEligible,
+  isCursorUltraEligible,
 } from './deals.js';
 
 export const SPEED_MODES = {
@@ -142,8 +152,8 @@ export function logAxisRange(min, max, { padFraction = 0.05, singletonPad = 0.5 
 /**
  * Full era point set for stable axis domains: every measured row of the
  * selected era plus every eligible estimate for that era at the active
- * quota utilization (always-on Contributor repricings plus eligible Go
- * subscription estimates). Filters (search, provider, open, retired,
+ * quota utilization (always-on Contributor repricings plus all eligible
+ * subscription estimates: Go, Claude Max, Codex, Cursor Ultra). Filters (search, provider, open, retired,
  * frontier) never narrow this set — the grid stays fixed while the plotted
  * subset changes. Eras never mix. Estimates are always included, even when
  * the subscription toggle is off, so toggling subscription estimates on/off
@@ -247,8 +257,20 @@ export function filterModels(models, opts = {}) {
 /** Trace name of the always-on direct Contributor estimate points. */
 export const CONTRIBUTOR_TRACE_NAME = 'Contributor (estimates)';
 
-/** Trace name of the opt-in Go subscription estimate points. */
-export const SUBSCRIPTION_TRACE_NAME = 'Subscription estimates (Go only)';
+/** Trace name of the opt-in subscription estimate points (single toggle). */
+export const SUBSCRIPTION_TRACE_NAME = 'Subscription estimates';
+
+/** Per-offer trace names inside the subscription toggle (distinct icons). */
+export const GO_TRACE_NAME = 'Go quota-equiv est.';
+export const CLAUDE_MAX_TRACE_NAME = `Claude Max $${CLAUDE_MAX_FEE_USD} ~${CLAUDE_MAX_MULTIPLIER}x est.`;
+export const CODEX_TRACE_NAME = `ChatGPT Pro/Codex $${CODEX_FEE_USD} ~${CODEX_MULTIPLIER}x est.`;
+export const CURSOR_ULTRA_TRACE_NAME = `Cursor Ultra $${CURSOR_ULTRA_FEE_USD} ~${CURSOR_ULTRA_MULTIPLIER}x est.`;
+export const SUBSCRIPTION_TRACE_NAMES = [
+  GO_TRACE_NAME,
+  CLAUDE_MAX_TRACE_NAME,
+  CODEX_TRACE_NAME,
+  CURSOR_ULTRA_TRACE_NAME,
+];
 
 /**
  * Legacy alias: subscription estimates were formerly grouped under a generic
@@ -306,11 +328,31 @@ export function estimateGoCost(baseCost, tierQuota, { subscription = GO_SUBSCRIP
   return (baseCost * subscription) / (tierQuota * Math.min(utilization, 1));
 }
 
+/**
+ * Saturation-scenario effective cost per task under a flat-fee plan:
+ * `baseCost / (multiplier * utilization)`.
+ *
+ * `multiplier` is the sourced full-use value ratio (e.g. 40x Claude Max,
+ * 70x Codex, 2x Cursor Ultra) — an empirical saturation figure, not a plan
+ * guarantee. `utilization` is the fraction of the saturating workload
+ * actually used (1 = full use); values above 1 clamp to 1. Returns null for
+ * non-positive base cost/multiplier or invalid utilization.
+ */
+export function estimateSubscriptionCost(baseCost, multiplier, { utilization = 1 } = {}) {
+  if (!isPositiveFinite(baseCost)) return null;
+  if (!isPositiveFinite(multiplier)) return null;
+  if (!Number.isFinite(utilization) || !(utilization > 0)) return null;
+  return baseCost / (multiplier * Math.min(utilization, 1));
+}
+
 /** Short human label for a deal descriptor (table Terms column, legend). */
 export function dealLabel(deal) {
   if (!deal || typeof deal !== 'object') return 'Measured';
   if (deal.kind === 'contributor') return 'Contributor est.';
   if (deal.kind === 'contributor-go') return `Contributor via Go $${deal.tier} (compounded est.)`;
+  if (deal.kind === 'claude-max') return CLAUDE_MAX_TRACE_NAME;
+  if (deal.kind === 'codex') return CODEX_TRACE_NAME;
+  if (deal.kind === 'cursor-ultra') return CURSOR_ULTRA_TRACE_NAME;
   if (deal.kind === 'go') {
     return deal.promoActive
       ? `Go $${deal.tier} quota-equiv est. (promo)`
@@ -339,6 +381,26 @@ export function dealAssumption(deal) {
     return `Compounded estimate: Contributor repricing first, then the $10/mo Go quota formula ` +
       `over the $${deal.tier} tier at ${pct}% quota use. Quota-equivalent estimate; assumes benchmark ` +
       `cost at Go rates; full budget spent on this tier. ${inherited}`;
+  }
+  if (deal.kind === 'claude-max') {
+    return `Claude Max $${deal.fee} lab-wide workload proxy at ${pct}% use (~${deal.multiplier}x full-use ` +
+      `saturation, SemiAnalysis June 2026 weekly-caps-exhausted methodology, lower-bounded by a July ` +
+      `1–20 audit at 39.07x; not the plan-official 5x/20x usage labels). Scenario workload, not the ` +
+      `measured per-model task; no guaranteed current capacity. ${inherited}`;
+  }
+  if (deal.kind === 'codex') {
+    return `ChatGPT Pro/Codex $${deal.fee} lab-wide workload proxy at ${pct}% use (~${deal.multiplier}x ` +
+      `full-use saturation, SemiAnalysis June 2026 weekly-caps-exhausted methodology; independent Aug ` +
+      `1–19 audit at 29.81x is a lower-bound reference, not the plotted ratio; not the plan-official ` +
+      `5x/20x usage labels). Scenario workload, not the measured per-model task; no guaranteed current ` +
+      `capacity. ${inherited}`;
+  }
+  if (deal.kind === 'cursor-ultra') {
+    return `Cursor Ultra $${deal.fee} third-party allowance estimate at ${pct}% use (~${deal.multiplier}x ` +
+      `from the last-published $${deal.pool} pool, basis through Aug 2026; current docs only say ` +
+      `"Included", so the current pool size is unverified). Claude/GPT/Gemini pool rows only ` +
+      `(Fable included via this pool, not via the 40x proxy). ` +
+      `Meta/Grok/Composer pools excluded. Scenario workload, not the measured per-model task. ${inherited}`;
   }
   const promo = deal.promoActive
     ? ' Includes the limited-time 4x promo quota (ends 2026-09-28T00:00:00Z); base tier $15.'
@@ -478,6 +540,15 @@ export function computeHoverTooltipPosition({
  * `MIN_NOTABLE_GO_TIER` ($30/$60). The $15 tier never produces plotted,
  * table or domain points — a promo reverting to $15 disappears — while the
  * pure `estimateGoCost` formula still accepts $15 for general use.
+ *
+ * On top of the curated Go/Contributor entries, the sourced subscription
+ * scenarios (`claude-max` 40x, `codex` 70x, `cursor-ultra` 2x) are derived
+ * per eligible live row of the selected era via `estimateSubscriptionCost`
+ * (baseCost / (multiplier × utilization)). Scope is explicit per plan (see
+ * deals.js helpers): retired rows, archive eras, Mythos enterprise-only rows,
+ * Fable rows for the 40x proxy (reduced Max limits, uncalibrated — Cursor
+ * pool only), open-weights `gpt-oss-*`, and out-of-scope labs never gain
+ * scenario points beyond their scope.
  */
 export function buildDealPoints(models, { era = null, utilization = 1, now = Date.now() } = {}) {
   const use = Number.isFinite(utilization) && utilization > 0 ? Math.min(utilization, 1) : NaN;
@@ -559,6 +630,74 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
     }
     // Unknown kinds are ignored so a config typo can never inject a point.
   }
+  // Sourced saturation scenarios: live rows only (retired/archive never gain
+  // scenario points), explicit per-plan lab/family scope (never universal).
+  // Each is a lab-wide workload proxy: baseCost / (multiplier × utilization),
+  // with benchmark iq/speed inherited as proxies.
+  for (const base of byId.values()) {
+    if (base.retired) continue;
+    if (isClaudeMaxEligible(base)) {
+      const cost = estimateSubscriptionCost(base.cost, CLAUDE_MAX_MULTIPLIER, { utilization: use });
+      if (cost !== null) {
+        points.push({
+          ...base,
+          id: `sub:${base.id}:claude-max${CLAUDE_MAX_MULTIPLIER}x`,
+          name: `${base.name} (${CLAUDE_MAX_TRACE_NAME})`,
+          cost,
+          deal: {
+            kind: 'claude-max',
+            plan: `Claude Max $${CLAUDE_MAX_FEE_USD}`,
+            fee: CLAUDE_MAX_FEE_USD,
+            multiplier: CLAUDE_MAX_MULTIPLIER,
+            baseCost: base.cost,
+            utilization: use,
+            parityNote: 'Lab-wide workload proxy; scenario workload, not the measured per-model task.',
+          },
+        });
+      }
+    }
+    if (isCodexEligible(base)) {
+      const cost = estimateSubscriptionCost(base.cost, CODEX_MULTIPLIER, { utilization: use });
+      if (cost !== null) {
+        points.push({
+          ...base,
+          id: `sub:${base.id}:codex${CODEX_MULTIPLIER}x`,
+          name: `${base.name} (${CODEX_TRACE_NAME})`,
+          cost,
+          deal: {
+            kind: 'codex',
+            plan: `ChatGPT Pro/Codex $${CODEX_FEE_USD}`,
+            fee: CODEX_FEE_USD,
+            multiplier: CODEX_MULTIPLIER,
+            baseCost: base.cost,
+            utilization: use,
+            parityNote: 'Lab-wide workload proxy; scenario workload, not the measured per-model task.',
+          },
+        });
+      }
+    }
+    if (isCursorUltraEligible(base)) {
+      const cost = estimateSubscriptionCost(base.cost, CURSOR_ULTRA_MULTIPLIER, { utilization: use });
+      if (cost !== null) {
+        points.push({
+          ...base,
+          id: `sub:${base.id}:cursor-ultra${CURSOR_ULTRA_MULTIPLIER}x`,
+          name: `${base.name} (${CURSOR_ULTRA_TRACE_NAME})`,
+          cost,
+          deal: {
+            kind: 'cursor-ultra',
+            plan: `Cursor Ultra $${CURSOR_ULTRA_FEE_USD}`,
+            fee: CURSOR_ULTRA_FEE_USD,
+            pool: CURSOR_ULTRA_POOL_USD,
+            multiplier: CURSOR_ULTRA_MULTIPLIER,
+            baseCost: base.cost,
+            utilization: use,
+            parityNote: 'Last-published allowance estimate; current pool size unverified.',
+          },
+        });
+      }
+    }
+  }
   return points;
 }
 
@@ -574,7 +713,8 @@ export function buildContributorPoints(models, opts = {}) {
 
 /**
  * Subscription estimates only (`kind: 'go'` plus compounded
- * `kind: 'contributor-go'`). Shown only when the subscription toggle is on;
+ * `kind: 'contributor-go'` plus the sourced `claude-max` / `codex` /
+ * `cursor-ultra` scenarios). Shown only when the subscription toggle is on;
  * the cost axis/domain already contains them while off so enabling the toggle
  * never rescales.
  */

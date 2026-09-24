@@ -59,8 +59,8 @@
         </div>
 
         <div class="control-group">
-          <label><input type="checkbox" id="deals-toggle" /> Subscription estimates (Go only)</label>
-          <label for="deals-util">Quota use, %</label>
+          <label><input type="checkbox" id="deals-toggle" /> Subscription estimates</label>
+          <label for="deals-util">Quota / workload use, %</label>
           <input id="deals-util" type="number" min="1" max="100" step="1" value="100" />
           <p class="hint dim" id="deals-note"></p>
         </div>
@@ -153,24 +153,51 @@
             Standard-only and stays measured-only.
           </li>
           <li>
-            <strong>Subscription estimates (Go only, off by default)</strong>
-            adds Go quota-equiv estimates ($10/mo over the notable $30/$60 tiers
-            at your quota-use %; rolling 5h 20% / weekly 50% / monthly 100%;
-            $15 omitted), including compounded Contributor-via-Go for the Muse
-            Spark Contributor rows. Estimates inherit benchmark intelligence/speed
-            (not provider measurements), assume benchmark cost meters at Go rates (never
-            exact parity), assume the full budget is spent on the modeled
-            tier, and ignore peak/off-peak and context-tier price splits.
-            Curated by hand in
-            <code>src/deals.js</code> from the
+            <strong>Subscription estimates (off by default)</strong> add
+            separately labeled, per-offer estimate points (same provider
+            colors, distinct marker per offer) at your quota/workload-use %:
+            Go quota-equiv ($10/mo over the notable $30/$60 tiers; rolling 5h
+            20% / weekly 50% / monthly 100%; $15 omitted), including
+            compounded Contributor-via-Go for the Muse Spark Contributor
+            rows; <strong>Claude Max $200 ~40x est.</strong> (live
+            Claude Opus/Sonnet/Haiku rows);
+            <strong>ChatGPT Pro/Codex $200 ~70x est.</strong> (live GPT
+            subscription rows, open-weights <code>gpt-oss</code> excluded);
+            and <strong>Cursor Ultra $200 ~2x est.</strong> (live
+            Claude/GPT/Gemini third-party pool rows only, Fable included).
+            Scenario cost is
+            the measured cost ÷ (multiplier × use). Estimates inherit
+            benchmark intelligence/speed (not provider measurements, never
+            called measured): each scenario is a lab-wide workload proxy, not
+            the measured per-model task, with no guaranteed current capacity.
+            The 40x/70x ratios are full-use empirical saturation figures
+            (SemiAnalysis June 2026 weekly-caps-exhausted methodology), not
+            the plan-official 5x/20x usage labels; the 2x Cursor ratio is the
+            last-published $400 pool on the $200 tier (basis through Aug
+            2026; current docs only say &ldquo;Included&rdquo;, so the current
+            pool size is unverified). Mythos enterprise-only rows, Fable rows
+            (reduced Max limits, uncalibrated for 40x — Cursor pool only),
+            retired rows and archive eras never gain scenario points; direct
+            Grok/Gemini ratios are omitted (unknown, not 1x), and the Cursor
+            Composer ~10x audit is Composer-only and never applied to other
+            models. Curated by hand in <code>src/deals.js</code> from the
             <a href="https://dev.meta.ai/docs/pricing-rate-limits">Meta pricing/rate-limits</a>,
             <a href="https://dev.meta.ai/docs/reasoning">reasoning</a>,
             <a href="https://dev.meta.ai/docs/models">models</a> and
-            <a href="https://opencode.ai/docs/go/">OpenCode Go</a> docs
-            (reviewed 2026-09-24; not auto-refreshed &mdash; re-check the sources;
-            DeepSeek V4.1 Flash uses the active 4x promo quota until
-            2026-09-28 UTC, then disappears). Other subscriptions were reviewed
-            2026-09-24 but are not plotted &mdash; see README.
+            <a href="https://opencode.ai/docs/go/">OpenCode Go</a> docs plus
+            the
+            <a href="https://x.com/SemiAnalysis_/status/2064815044085318040">SemiAnalysis June 2026 methodology</a>,
+            <a href="https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans">token-value numbers</a>,
+            <a href="https://quesma.com/blog/claude-code-pricing-for-enterprise/">Claude enterprise pricing</a>,
+            <a href="https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/">Claude audit (July 1–20)</a>,
+            <a href="https://norml.studio/blog/ai-subscription-vs-api-pricing">Codex audit (Aug 1–19)</a> and
+            <a href="https://cursor.com/docs/models-and-pricing">Cursor pricing</a>
+            (<a href="https://forum.cursor.com/t/156411">historical pools</a>,
+            <a href="https://forum.cursor.com/t/144918">historical pools</a>,
+            <a href="https://forum.cursor.com/t/166360">staff note</a>)
+            (reviewed 2026-09-24; not auto-refreshed &mdash; re-check the
+            sources; DeepSeek V4.1 Flash uses the active 4x promo quota until
+            2026-09-28 UTC, then disappears). Research notes live in the README.
           </li>
         </ul>
       </footer>

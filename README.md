@@ -70,12 +70,12 @@ readable by the unprivileged nginx process.
   (higher intelligence, lower cost, better speed); ties are kept together.
 - Axes stay fixed per era/speed view. Cost (log), speed (log) and
   intelligence span the full selected-era population — every measured row
-  plus every eligible Contributor and Go estimate at the active quota use,
-  including retired models — computed before
+  plus every eligible Contributor and subscription estimate at the active
+  use, including retired models — computed before
   search/provider/open/retired/frontier/subscription filtering, so the grid
   never rescales while filtering. Toggling subscription estimates on/off does
-  not rescale (Contributor plus eligible Go estimates are always in the
-  domain); only quota use, promo expiry, speed-metric switches (new units)
+  not rescale (Contributor plus all eligible subscription estimates are
+  always in the domain); only use, promo expiry, speed-metric switches (new units)
   and era switches legitimately recompute. Log ranges use log10 with endpoint padding and
   singleton expansion so all plottable points (including frontier extremes)
   sit inside; eras with no speed measurements leave speed to autorange.
@@ -97,7 +97,7 @@ readable by the unprivileged nginx process.
   reviewed 2026-09-24). Unknown future providers fall back to neutral gray;
   dark fills stay readable via a light dot outline.
 
-## Estimates: Contributor (always on) vs subscription (Go only, off by default)
+## Estimates: Contributor (always on) vs subscription (off by default)
 
 Direct **Contributor** repricings use the distinct Meta token tariff and are
 always plotted in their own `Contributor (estimates)` trace alongside the
@@ -111,54 +111,50 @@ measured. Hover/table terms say `Contributor est.` with the assumption.
 Muse Spark 1.3 (xhigh) and 1.2 (xhigh) only — `(max)` is Standard-only and
 stays measured-only.
 
-The **Subscription estimates (Go only)** toggle (off by default) adds Go
-quota-equiv estimates in a separate `Subscription estimates (Go only)` trace,
-including compounded Contributor-via-Go for the Muse Spark Contributor rows.
-Each assumes benchmark cost meters at Go rates (never exact parity) with the
-full $10/mo budget on the modeled tier. Mapping: `src/deals.js` —
-hand-curated from the
-[Meta](https://dev.meta.ai/docs/pricing-rate-limits)
-([reasoning](https://dev.meta.ai/docs/reasoning),
-[models](https://dev.meta.ai/docs/models)) and
-[OpenCode Go](https://opencode.ai/docs/go/) docs, exact snapshot-id match,
-current era only, never auto-rescraped. Sources reviewed 2026-09-24;
-re-review when tiers/prices/promos change. Go quota-equivalents at the
-notable $30/$60 tiers only ($15 omitted; V4.1 Flash uses the active $60
-promo until 2026-09-28T00:00Z, then disappears). Uncertain aliases, dated
-versions, free promos and Standard-only (max) efforts are omitted.
+The **Subscription estimates** toggle (off by default) adds subscription
+estimates in separate per-offer traces (same provider colors, distinct marker
+per offer), including compounded Contributor-via-Go for the Muse Spark
+Contributor rows. Scenario cost is always
+`measured ÷ (multiplier × use)` at your quota/workload-use %; scenario
+intelligence/speed are inherited benchmark proxies, never provider-measured.
+Every scenario is an approximate, user-authorized **lab-wide workload
+proxy** — not the measured per-model task, with no guaranteed current
+capacity. Mapping: `src/deals.js` — hand-curated from the docs and audits in
+the evidence table below; exact Go snapshot-id match; scenarios match
+explicit live current-era lab/family scopes (never universal); retired rows,
+archive eras and Mythos enterprise-only rows never gain scenario points, and
+Fable rows are withheld from the 40x proxy (reduced Max limits, uncalibrated)
+while included in the Cursor pool. Source basis June 2026, reviewed
+2026-09-24; re-review when tiers/prices/promos change.
 
-### Other subscriptions researched (not plotted)
+### Evidence (plotted ratios are full-use empirical saturation, approximate)
 
-Reviewed 2026-09-24; not plotted — plan-to-API arithmetic without a fixed
-included API-dollar pool would be opaque. A comparable per-task ratio would
-need actual token usage including caches plus the plan's usage limits.
+| Offer (trace/terms) | Fee | Plotted ratio | Basis | Lower-bound reference | Scope |
+| --- | --- | --- | --- | --- | --- |
+| Go quota-equiv (`Go $30/$60 quota-equiv est.`) | $10/mo | 3x / 6x ($10 over $30/$60) | [OpenCode Go](https://opencode.ai/docs/go/) quotas (5h 20% / weekly 50% / monthly 100%; $15 omitted; V4.1 Flash uses the active $60 promo until 2026-09-28T00:00Z, then disappears) | — | Curated exact snapshot ids, current era |
+| Claude Max $200 (`Claude Max $200 ~40x est.`) | $200 | ~40x | [SemiAnalysis methodology, June 10 2026](https://x.com/SemiAnalysis_/status/2064815044085318040) (weekly caps exhausted); [token-value numbers](https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans); [enterprise pricing](https://quesma.com/blog/claude-code-pricing-for-enterprise/) (Fable at reduced Max limits — omitted here as uncalibrated) | 39.07x — [July 1–20 self-audit](https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/) ($7814.13 vs $200) | Live current-era Anthropic Claude Opus/Sonnet/Haiku; Fable omitted (reduced limits), Mythos omitted (enterprise-only) |
+| ChatGPT Pro/Codex $200 (`ChatGPT Pro/Codex $200 ~70x est.`) | $200 | ~70x | Same [SemiAnalysis June 10 2026 methodology](https://x.com/SemiAnalysis_/status/2064815044085318040); [token-value numbers](https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans) | 29.81x — [Aug 1–19 Codex audit](https://norml.studio/blog/ai-subscription-vs-api-pricing) ($5961.08 vs $200), reference only | Live current-era OpenAI GPT subscription rows (`gpt-*`, no `gpt-oss`); Mythos omitted if present (enterprise-only) |
+| Cursor Ultra $200 (`Cursor Ultra $200 ~2x est.`) | $200 | ~2x | Last-published $400 third-party pool on the $200 tier (basis thru Aug 2026: [forum pools](https://forum.cursor.com/t/156411), [forum pools](https://forum.cursor.com/t/144918), [staff note July 2026](https://forum.cursor.com/t/166360)); current [Cursor pricing](https://cursor.com/docs/models-and-pricing) only says “Included” — current pool size unverified | — (Pro 1x / Pro+ ~1.17x too small, omitted) | Live current-era Claude/GPT/Gemini pool rows only (Fable included — Cursor lists Fable 5 rates); Meta/Grok/Composer and other labs excluded |
 
-- GitHub Copilot
-  ([billing](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals)):
-  Pro $10 includes $15 (1.5x), Pro+ $39 includes $70 (1.79x), Max $100
-  includes $200 (2x); totals flex and may change. Credits are
-  dollar-denominated but API parity is unverified, so the credit-allowance
-  ratio is not an AA-task exact cost.
-- Anthropic
-  ([Max plan](https://support.claude.com/en/articles/11049741-what-is-the-max-plan)):
-  Pro $20, Max $100 5x / $200 20x refers to Pro per-5h usage, not an
-  API-dollar ratio; weekly additional caps, no fixed included dollars.
-- OpenAI
-  ([pro tiers](https://help.openai.com/en/articles/9793128-about-chatgpt-pro-tiers)):
-  Plus $20, Pro $100 5x / $200 20x; Pro $200 new signups paused since
-  Sep 10 2026 (existing renew). Quotas depend on tokens/task
-  ([codex pricing](https://chatgpt.com/codex/pricing/)), no included API
-  dollar pool.
-- Cursor ([models and pricing](https://cursor.com/docs/models-and-pricing)):
-  plan rates $20/$60/$200, but the current body only says included pools
-  with no dollar sizes; unverified indexed $20/$70/$400 figures are not
-  published here.
+The 40x/70x ratios are explicitly **not** the plan-official 5x/20x usage
+labels ([Anthropic Max](https://support.claude.com/en/articles/11049741-what-is-the-max-plan),
+[OpenAI pro tiers](https://help.openai.com/en/articles/9793128-about-chatgpt-pro-tiers)
+refer to per-5h usage with weekly caps, not an API-dollar ratio).
 
-Empirical note (not in UI): a Claude Max $200 self-audit
-([subscription vs API cost audit](https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/))
-via ccusage reports May $237.08 ⇒ 1.19x, Jun $214.91 ⇒ 1.07x, Jul 1–20
-$7814.13 ⇒ 39.07x vs the full $200 fee — a partial month, not a monthly
-guarantee.
+### Researched but not plotted
+
+Reviewed 2026-09-24. No invented availability: anything outside the table
+scope above gains no estimate point.
+
+- Cursor Composer
+  ([June 2026 audit](https://codejam.info/2026/06/how-much-is-composer-2-5-subsidized-in-cursor.html)):
+  Pro $20 reported ~$208 overall value (163 Auto/Composer, 46 API pool),
+  ~10x — Composer-heavy and Composer-only. It is never transferred to Grok
+  or other third-party models, and no unsupported Composer row is plotted
+  where the benchmark has no measurement.
+- Direct Grok / Gemini ratios: no defensible ratio exists (unknown, not 1x),
+  so neither is plotted directly. Gemini is still covered via the Cursor
+  Ultra third-party pool above, which is a separate, supported estimate.
 
 Hover shows an offset HTML card with a pointer to the dot (never centered
 over it); Plotly gl3d offers no public hover-card offset, so the built-in

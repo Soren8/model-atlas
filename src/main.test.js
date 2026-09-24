@@ -389,8 +389,12 @@ describe('subscription toggle (Contributor always on)', () => {
     return lastCall(Plotly)[1].find((t) => t.name === 'Contributor (estimates)');
   }
 
-  function subscriptionTrace(Plotly) {
-    return lastCall(Plotly)[1].find((t) => t.name === 'Subscription estimates (Go only)');
+  function goTrace(Plotly) {
+    return lastCall(Plotly)[1].find((t) => t.name === 'Go quota-equiv est.');
+  }
+
+  function offerTrace(Plotly, name) {
+    return lastCall(Plotly)[1].find((t) => t.name === name);
   }
 
   it('keeps Contributor always on while subscription stays off by default', async () => {
@@ -401,7 +405,7 @@ describe('subscription toggle (Contributor always on)', () => {
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
     // Direct Contributor (distinct token tariff) is always plotted in its own
-    // trace; Go subscription estimates wait for the toggle.
+    // trace; subscription estimates wait for the toggle.
     const contributor = contributorTrace(Plotly);
     expect(contributor).toBeDefined();
     expect(contributor.type).toBe('scatter3d');
@@ -409,7 +413,10 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(contributor.x).toHaveLength(1);
     expect(contributor.text.join('\n')).toContain('not an Artificial Analysis measurement');
     expect(contributor.text.join('\n')).toContain('inherited benchmark');
-    expect(subscriptionTrace(Plotly)).toBeUndefined();
+    expect(goTrace(Plotly)).toBeUndefined();
+    expect(offerTrace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
+    expect(offerTrace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')).toBeUndefined();
+    expect(offerTrace(Plotly, 'Cursor Ultra $200 ~2x est.')).toBeUndefined();
     expect(lastCall(Plotly)[2].scene.xaxis.title).toMatchObject({
       text: 'Cost per task, USD (log; Contributor estimates)',
     });
@@ -437,24 +444,30 @@ describe('subscription toggle (Contributor always on)', () => {
 
     const data = lastCall(Plotly)[1];
     const contributor = contributorTrace(Plotly);
-    const subscription = subscriptionTrace(Plotly);
+    const go = goTrace(Plotly);
     expect(contributor).toBeDefined();
-    expect(subscription).toBeDefined();
-    expect(subscription.type).toBe('scatter3d');
-    expect(subscription.marker.symbol).toBe('diamond');
-    // Contributor trace stays at 1 direct point; subscription holds the
+    expect(go).toBeDefined();
+    expect(go.type).toBe('scatter3d');
+    expect(go.marker.symbol).toBe('square');
+    // Contributor trace stays at 1 direct point; the Go trace holds the
     // compounded Contributor-via-Go plus Go $60 for GLM 5.3 Flash.
     expect(contributor.x).toHaveLength(1);
-    expect(subscription.x).toHaveLength(2);
-    expect([...contributor.text, ...subscription.text].join('\n')).toContain(
+    expect(go.x).toHaveLength(2);
+    expect([...contributor.text, ...go.text].join('\n')).toContain(
       'not an Artificial Analysis measurement',
     );
-    expect([...contributor.text, ...subscription.text].join('\n')).toContain('inherited benchmark');
-    expect(subscription.text.some((t) => t.includes('(max)'))).toBe(false);
+    expect([...contributor.text, ...go.text].join('\n')).toContain('inherited benchmark');
+    expect(go.text.some((t) => t.includes('(max)'))).toBe(false);
     expect(contributor.text.some((t) => t.includes('(max)'))).toBe(false);
+    // This fixture has no Claude/GPT/Gemini scenario rows, so only the Go
+    // offer appears alongside Contributor.
+    expect(offerTrace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
+    expect(offerTrace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')).toBeUndefined();
+    expect(offerTrace(Plotly, 'Cursor Ultra $200 ~2x est.')).toBeUndefined();
     // Measured traces keep their names; estimates never join them.
     expect(data.find((t) => t.name === 'Models')).toBeDefined();
-    expect(lastCall(Plotly)[2].scene.xaxis.title.text).toContain('Go subscription estimates');
+    expect(lastCall(Plotly)[2].scene.xaxis.title.text).toContain('subscription estimates');
+    expect(lastCall(Plotly)[2].scene.xaxis.title.text).not.toMatch(/Go only/);
     expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
     expect(document.getElementById('counts').textContent).toContain('subscription estimates');
 
@@ -475,11 +488,11 @@ describe('subscription toggle (Contributor always on)', () => {
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
-    const subscription = subscriptionTrace(Plotly);
-    const idx = subscription.text.findIndex((t) => t.includes('GLM 5.3 Flash'));
+    const go = goTrace(Plotly);
+    const idx = go.text.findIndex((t) => t.includes('GLM 5.3 Flash'));
     expect(idx).toBeGreaterThanOrEqual(0);
     // 0.25326 × 10 / (60 × 0.5) at half use.
-    expect(subscription.x[idx]).toBeCloseTo(0.25326 / 3, 10);
+    expect(go.x[idx]).toBeCloseTo(0.25326 / 3, 10);
     // Direct Contributor cost ignores quota use (distinct token tariff).
     const contributor = contributorTrace(Plotly);
     expect(contributor.x).toHaveLength(1);
@@ -505,6 +518,73 @@ describe('subscription toggle (Contributor always on)', () => {
 
     expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
     expect(document.getElementById('model-tbody').textContent).toContain('Go $60 quota-equiv est.');
+  });
+
+  it('plots each subscription offer in its own trace with lab colors and proxy hover text', async () => {
+    document.body.innerHTML = DEALS_FIXTURE;
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        source_url: 'https://example.test/upstream.json',
+        source_updated: '2026-09-23',
+        fetched_at: '2026-09-23T00:00:00+00:00',
+        eras: [{ index: 1, label: 'v4.3 (current)', note: 'current note' }],
+        models: [
+          { id: 'claude-opus-5-xhigh', name: 'Claude Opus 5 (xhigh)', creator: 'Anthropic', release: '2026-08-01', iq: 49.7, cost: 4.8, retired: false, open: false, era: 1, time_sec: 100, tps: 60, ttft: 0.5 },
+          { id: 'gpt-5-5-high', name: 'GPT-5.5 (high)', creator: 'OpenAI', release: '2026-08-01', iq: 37, cost: 1.4, retired: false, open: false, era: 1, time_sec: 50, tps: 120, ttft: 0.4 },
+          { id: 'gemini-3-8-flash-high', name: 'Gemini 3.8 Flash (high)', creator: 'Google', release: '2026-08-01', iq: 40.9, cost: 1.2, retired: false, open: false, era: 1, time_sec: 70, tps: 90, ttft: 0.3 },
+          { id: 'grok-4-7-high', name: 'Grok 4.7 (high)', creator: 'SpaceXAI', release: '2026-08-01', iq: 46.3, cost: 2.7, retired: false, open: false, era: 1, time_sec: 80, tps: 70, ttft: 0.3 },
+          { id: 'claude-fable-5-1-max', name: 'Claude Fable (max)', creator: 'Anthropic', release: '2026-08-01', iq: 50, cost: 5, retired: false, open: false, era: 1, time_sec: 90, tps: 55, ttft: 0.5 },
+        ],
+      }),
+    });
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    expect(offerTrace(Plotly, 'Claude Max $200 ~40x est.')).toBeUndefined();
+
+    document.getElementById('deals-toggle').checked = true;
+    document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
+
+    const data = lastCall(Plotly)[1];
+    const claudeMax = offerTrace(Plotly, 'Claude Max $200 ~40x est.');
+    const codex = offerTrace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.');
+    const ultra = offerTrace(Plotly, 'Cursor Ultra $200 ~2x est.');
+    expect(claudeMax).toBeDefined();
+    expect(codex).toBeDefined();
+    expect(ultra).toBeDefined();
+    // One Claude row gains Claude Max; GPT gains Codex; all three plus the
+    // Fable row (reduced Max caps: Cursor pool only, never the 40x proxy)
+    // gain Cursor.
+    expect(claudeMax.x).toHaveLength(1);
+    expect(claudeMax.x[0]).toBeCloseTo(4.8 / 40, 10);
+    expect(codex.x).toHaveLength(1);
+    expect(codex.x[0]).toBeCloseTo(1.4 / 70, 10);
+    expect(ultra.x).toHaveLength(4);
+    expect(ultra.x).toContain(5 / 2);
+    // Distinct markers per offer, same provider colors as measured rows.
+    const symbols = new Set([claudeMax.marker.symbol, codex.marker.symbol, ultra.marker.symbol]);
+    expect(symbols.size).toBe(3);
+    expect(claudeMax.marker.color).toEqual(['#cc785c']);
+    expect(codex.marker.color).toEqual(['#1f1f1f']);
+    expect(new Set(ultra.marker.color)).toEqual(new Set(['#cc785c', '#1f1f1f', '#34A853']));
+    // Grok gains no scenario point (the Cursor disclaimer names excluded
+    // pools, so match the full model name, not pool words). Fable appears
+    // only in the Cursor trace — never under the 40x proxy.
+    const allOfferText = [...claudeMax.text, ...codex.text, ...ultra.text].join('\n');
+    expect(allOfferText).not.toContain('Grok 4.7 (high)');
+    expect(claudeMax.text.join('\n')).not.toContain('Claude Fable');
+    expect(ultra.text.join('\n')).toContain('Claude Fable');
+    expect(allOfferText).toContain('lab-wide workload proxy');
+    expect(data.find((t) => t.name === 'Models')).toBeDefined();
+
+    const bodyText = document.getElementById('model-tbody').textContent;
+    expect(bodyText).toContain('Claude Max $200 ~40x est.');
+    expect(bodyText).toContain('ChatGPT Pro/Codex $200 ~70x est.');
+    expect(bodyText).toContain('Cursor Ultra $200 ~2x est.');
+    expect(document.getElementById('counts').textContent).toContain('subscription estimates');
   });
 });
   it('falls back to autorange when the selected era has no finite intelligence', async () => {
@@ -810,8 +890,8 @@ describe('stable axis domains keep the grid fixed', () => {
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
     // Subscription off: the fixed cost range already contains the always-on
-    // Contributor (~$0.07) plus eligible Go estimates (compounded Go ~$0.01)
-    // so enabling the toggle cannot rescale.
+    // Contributor (~$0.07) plus all eligible subscription estimates
+    // (compounded Go ~$0.01) so enabling the toggle cannot rescale.
     const offRanges = ranges(Plotly);
     const offBox = boxOf(Plotly);
     expect(offRanges.x).toBeDefined();
@@ -819,7 +899,7 @@ describe('stable axis domains keep the grid fixed', () => {
     expectContains(offRanges.x, 1.367794);
     // Contributor trace is already plotted while subscription waits.
     expect(lastPlot(Plotly)[1].some((t) => t.name === 'Contributor (estimates)')).toBe(true);
-    expect(lastPlot(Plotly)[1].some((t) => t.name === 'Subscription estimates (Go only)')).toBe(false);
+    expect(lastPlot(Plotly)[1].some((t) => t.name === 'Go quota-equiv est.')).toBe(false);
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
@@ -830,11 +910,11 @@ describe('stable axis domains keep the grid fixed', () => {
     expect(ranges(Plotly).z).toEqual(offRanges.z);
     expect(boxOf(Plotly).x).toEqual(offBox.x);
     const contributor = lastPlot(Plotly)[1].find((t) => t.name === 'Contributor (estimates)');
-    const subscription = lastPlot(Plotly)[1].find((t) => t.name === 'Subscription estimates (Go only)');
+    const go = lastPlot(Plotly)[1].find((t) => t.name === 'Go quota-equiv est.');
     expect(contributor).toBeDefined();
-    expect(subscription).toBeDefined();
-    for (const v of [...contributor.x, ...subscription.x]) expectContains(ranges(Plotly).x, v);
-    for (const v of [...contributor.y, ...subscription.y]) expectContains(ranges(Plotly).y, v);
+    expect(go).toBeDefined();
+    for (const v of [...contributor.x, ...go.x]) expectContains(ranges(Plotly).x, v);
+    for (const v of [...contributor.y, ...go.y]) expectContains(ranges(Plotly).y, v);
   });
 });
 

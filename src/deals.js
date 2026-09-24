@@ -1,21 +1,61 @@
 /**
- * Curated, source-reviewed estimate configuration (Contributor + Go).
+ * Curated, source-reviewed estimate configuration (Contributor + subscriptions).
  *
- * This file is maintained by hand from the official provider docs listed
- * below — it is deliberately separate from the measured snapshot
- * (`public/data/models.json`) and is never rescraped automatically, because
- * neither Artificial Analysis nor the upstream llm-frontier feed publishes
- * these prices. Re-check the sources before trusting the estimates:
- * tiers, token prices and promos change.
+ * This file is maintained by hand from the official provider docs and the
+ * sourced subscription audits listed below — it is deliberately separate
+ * from the measured snapshot (`public/data/models.json`) and is never
+ * rescraped automatically, because neither Artificial Analysis nor the
+ * upstream llm-frontier feed publishes these prices. Re-check the sources
+ * before trusting the estimates: tiers, token prices and promos change.
  *
  * Display split (see lib.js `buildContributorPoints` /
  * `buildSubscriptionPoints` and main.js `combinedModels`): direct
  * Contributor repricings (`kind: 'contributor'`, distinct Meta token tariff)
- * are always shown in their own trace; Go subscription estimates
- * (`kind: 'go'` plus compounded `kind: 'contributor-go'`) join only when the
- * "Subscription estimates (Go only)" toggle is on (off by default). Domains
- * always contain Contributor plus eligible Go estimates so the toggle never
- * rescales.
+ * are always shown in their own trace; subscription estimates (Go
+ * quota-equiv `kind: 'go'` plus compounded `kind: 'contributor-go'`, plus
+ * the sourced saturation scenarios `kind: 'claude-max'`, `kind: 'codex'`
+ * and `kind: 'cursor-ultra'`) join only when the single
+ * "Subscription estimates" toggle is on (off by default). Domains always
+ * contain Contributor plus all eligible subscription estimates so the
+ * toggle never rescales.
+ *
+ * Subscription scenarios (full-use empirical saturation, NOT plan-official
+ * 5x/20x labels):
+ *  - Claude Max $200 ~40x: SemiAnalysis methodology (June 10 2026) exhausting
+ *    the weekly caps; secondary token-value writeups; Quesma enterprise
+ *    pricing notes; lower-bounded by an independent July 1–20 audit
+ *    ($7814.13 API value vs the $200 fee ⇒ 39.07x).
+ *  - ChatGPT Pro/Codex $200 ~70x: same SemiAnalysis June 10 2026
+ *    methodology; independent Aug 1–19 Codex audit ($5961.08 vs $200 ⇒
+ *    29.81x) as a lower-bound reference, not the plotted ratio.
+ *  - Cursor Ultra $200 ~2x: last-published third-party allowance ($400 pool
+ *    on the $200 tier) as the estimate basis through Aug 2026; the current
+ *    Cursor docs only say "Included" with no dollar sizes, so the current
+ *    pool size is unverified. Pro (1x) and Pro+ (~1.17x) are too small to
+ *    plot and are omitted.
+ *  Effective cost in every scenario: baseCost / (multiplier × utilization).
+ *  Intelligence/speed are inherited benchmark proxies, never
+ *  provider-measured; each scenario is a lab-wide workload proxy, not a
+ *  per-model matched workload, with no guaranteed current capacity.
+ *  Source basis June 2026, reviewed 2026-09-24.
+ *
+  * Model scope (explicit — never universal across providers):
+  *  - Claude Max 40x: live, current-era Anthropic Claude Opus/Sonnet/Haiku
+  *    rows only. Fable is a Max plan model but runs at reduced weekly limits
+  *    (up to half, per Quesma), so it is omitted from the 40x proxy — its
+  *    caps are uncalibrated and no arbitrary 40x is applied. Mythos rows are
+  *    enterprise-only and omitted.
+  *  - Codex 70x: live, current-era OpenAI GPT subscription rows only
+  *    (`gpt-*` excluding open-weights `gpt-oss-*`); Mythos rows omitted if
+  *    present (enterprise-only).
+  *  - Cursor Ultra 2x: live, current-era Claude/GPT/Gemini third-party rows
+  *    only (the Cursor-billed pool, Fable included — Cursor lists Fable 5
+  *    third-party rates); Meta/Grok/Composer and all other labs are separate
+  *    proprietary pools and are excluded. Gemini has no defensible direct
+  *    ratio (unknown, not 1x) and is omitted directly, but Gemini via the
+  *    Cursor pool is supported.
+  *  Retired rows and archive eras never gain scenario points (Go keeps its
+  *  existing curated behavior, including retired rows, for continuity).
  *
  * Reviewed: 2026-09-24.
  * Refresh policy: re-review against the official sources below whenever the
@@ -36,6 +76,30 @@
  *    https://opencode.ai/docs/go/ (last updated 2026-09-23 per that page)
  *    Only the notable $30/$60 tiers gain estimate points; the $15 tier is
  *    omitted as not notable (see `buildDealPoints`).
+ *  - SemiAnalysis subscription token-value methodology (June 10 2026,
+ *    weekly caps exhausted — basis for the 40x/70x scenarios):
+ *    https://x.com/SemiAnalysis_/status/2064815044085318040
+ *  - Secondary token-value numbers (June 2026):
+ *    https://pasqualepillitteri.it/en/news/4793/semianalysis-token-value-claude-chatgpt-plans
+  *  - Claude enterprise pricing context (incl. Fable at reduced Max limits):
+  *    https://quesma.com/blog/claude-code-pricing-for-enterprise/
+ *  - Claude lower-bound self-audit, July 1–20 ($7814.13 vs $200 ⇒ 39.07x):
+ *    https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/
+ *  - Codex independent audit, Aug 1–19 ($5961.08 vs $200 ⇒ 29.81x):
+ *    https://norml.studio/blog/ai-subscription-vs-api-pricing
+  *  - Cursor current models and pricing (only "Included", no dollar sizes;
+  *    lists Fable 5 third-party rates):
+  *    https://cursor.com/docs/models-and-pricing
+ *  - Cursor historical allowance docs (last-published $20/$70/$400 pools,
+ *    basis through Aug 2026, not verified current):
+ *    https://forum.cursor.com/t/156411
+ *    https://forum.cursor.com/t/144918
+  *    staff note https://forum.cursor.com/t/166360 (July 2026: third-party
+ *    billed-API pools; Pro $20 and higher tiers)
+ *  - Cursor Composer subsidy audit, June 2026 (Pro $20 ⇒ ~$208 overall
+ *    value, ~10x, Composer-heavy — NOT transferred to other models, never
+ *    plotted on unsupported rows):
+ *    https://codejam.info/2026/06/how-much-is-composer-2-5-subsidized-in-cursor.html
  *
  * Explicit omissions (no fuzzy matches, no stale promos, no $15 tier):
  *  - Every $15-tier Go mapping is omitted as not notable: `glm-5-3-max`,
@@ -61,6 +125,12 @@
  *    (max is Standard-only), so it stays measured-only.
  *  - `qwen3-8-2-4t-a95b`, `muse-spark-1-1-xhigh`, `muse-glimmer-high`: present
  *    in the snapshot but not in the Go model list — never mapped.
+  *  - Subscription scenarios: Fable rows (40x caps uncalibrated — Cursor pool
+  *    only), Mythos enterprise-only rows, retired rows, archive eras,
+  *    open-weights `gpt-oss-*`, Meta/Grok/Composer pools (Cursor Ultra), and
+  *    every lab outside the stated per-plan scope never gain scenario points
+  *    beyond their scope. Composer ~10x is Composer-only and is never applied
+  *    to other models. Direct Grok/Gemini ratios are omitted (unknown, not 1x).
  *
  * Effort-mapping assumption: Go lists model families (GLM-5.2/5.1) without
  * an effort level, so every current-era snapshot effort row maps explicitly
@@ -78,6 +148,84 @@ export const DEALS_REFRESH_POLICY =
 
 /** OpenCode Go subscription price in USD/month (https://opencode.ai/docs/go/). */
 export const GO_SUBSCRIPTION_USD = 10;
+
+/**
+ * Sourced subscription saturation scenarios (full-use empirical, NOT
+ * plan-official 5x/20x labels). Effective cost:
+ * baseCost / (multiplier × utilization). Source basis June 2026, reviewed
+ * 2026-09-24; no guaranteed current capacity.
+ */
+export const CLAUDE_MAX_FEE_USD = 200;
+export const CLAUDE_MAX_MULTIPLIER = 40;
+export const CODEX_FEE_USD = 200;
+export const CODEX_MULTIPLIER = 70;
+export const CURSOR_ULTRA_FEE_USD = 200;
+export const CURSOR_ULTRA_POOL_USD = 400;
+export const CURSOR_ULTRA_MULTIPLIER = 2;
+export const SUBSCRIPTION_SOURCE_DATE = '2026-06-10';
+
+/**
+ * Scope helpers for the sourced scenarios (explicit per-plan eligibility —
+ * never universal). Each takes a snapshot row and returns true only for
+ * live rows in the stated lab/family; era scoping happens in
+ * `buildDealPoints` (eras never mix), and cost/iq validity is checked there
+ * too. Mythos rows are enterprise-only and always excluded; Fable rows are
+ * excluded from the 40x proxy (reduced Max limits, uncalibrated) but
+ * included in the Cursor pool via `isCursorClaudeEligible`.
+ */
+export function isClaudeMaxEligible(m) {
+  if (!m || typeof m !== 'object') return false;
+  if (m.retired) return false;
+  if (m.creator !== 'Anthropic') return false;
+  const id = String(m.id ?? '').toLowerCase();
+  if (!id.includes('claude-')) return false;
+  if (id.includes('fable') || id.includes('mythos')) return false;
+  return id.includes('opus') || id.includes('sonnet') || id.includes('haiku');
+}
+
+export function isCodexEligible(m) {
+  if (!m || typeof m !== 'object') return false;
+  if (m.retired) return false;
+  if (m.creator !== 'OpenAI') return false;
+  const id = String(m.id ?? '').toLowerCase();
+  if (id.includes('fable') || id.includes('mythos')) return false;
+  if (id.startsWith('gpt-oss')) return false;
+  return id.startsWith('gpt-');
+}
+
+export function isGeminiCursorEligible(m) {
+  if (!m || typeof m !== 'object') return false;
+  if (m.retired) return false;
+  if (m.creator !== 'Google') return false;
+  return String(m.id ?? '').toLowerCase().startsWith('gemini-');
+}
+
+/**
+ * Cursor-billed Claude scope: all live Anthropic Claude rows, Fable
+ * included (Cursor lists Fable 5 third-party rates). Mythos stays excluded
+ * (enterprise-only). Broader than `isClaudeMaxEligible`, which withholds the
+ * 40x proxy from Fable's reduced caps — never reuse the Max scope here.
+ */
+export function isCursorClaudeEligible(m) {
+  if (!m || typeof m !== 'object') return false;
+  if (m.retired) return false;
+  if (m.creator !== 'Anthropic') return false;
+  const id = String(m.id ?? '').toLowerCase();
+  if (!id.includes('claude-')) return false;
+  if (id.includes('mythos')) return false;
+  return true;
+}
+
+/**
+ * Cursor Ultra third-party pool eligibility: Cursor-billed Claude (incl.
+ * Fable) plus the GPT and Gemini scopes above. Meta/Grok/Composer and every
+ * other lab are separate proprietary pools and are excluded; direct
+ * Grok/Gemini ratios are omitted (unknown, not 1x) — Gemini is supported
+ * only via this pool.
+ */
+export function isCursorUltraEligible(m) {
+  return isCursorClaudeEligible(m) || isCodexEligible(m) || isGeminiCursorEligible(m);
+}
 
 /**
  * Per-model monthly quota tiers offered by Go (USD of included usage).

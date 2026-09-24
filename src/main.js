@@ -21,7 +21,10 @@ import {
   resolveHoverAnchor,
   HOVER_TOOLTIP_OFFSET,
   CONTRIBUTOR_TRACE_NAME,
-  SUBSCRIPTION_TRACE_NAME,
+  GO_TRACE_NAME,
+  CLAUDE_MAX_TRACE_NAME,
+  CODEX_TRACE_NAME,
+  CURSOR_ULTRA_TRACE_NAME,
 } from './lib.js';
 import { DEALS_REVIEWED } from './deals.js';
 
@@ -77,11 +80,11 @@ function speedValue(m) {
 
 /**
  * Measured rows plus estimates: direct Contributor repricings are always on
- * (distinct token tariff, separate trace); Go subscription estimates
- * (quota-equiv, including compounded Contributor-via-Go) join only when the
- * subscription toggle is on. Estimates flow through the same
- * search/provider/era/retired/frontier filters; measured rows are never
- * mutated.
+ * (distinct token tariff, separate trace); subscription estimates (Go
+ * quota-equiv including compounded Contributor-via-Go, plus the Claude Max /
+ * Codex / Cursor Ultra scenarios) join only when the subscription toggle is
+ * on. Estimates flow through the same search/provider/era/retired/frontier
+ * filters; measured rows are never mutated.
  */
 function combinedModels() {
   if (!state.payload) return [];
@@ -141,6 +144,21 @@ function dealHoverText(m) {
     const pct = Math.round(d.utilization * 100);
     lines.push(`Compounded: Contributor ${formatUsd(d.contributorCost)} × $10 / ($${d.tier} tier × ${pct}% use)`);
     lines.push('Two stacked estimates; assumes benchmark cost at Go rates');
+  } else if (d.kind === 'claude-max') {
+    const pct = Math.round(d.utilization * 100);
+    lines.push(`Claude Max $${d.fee} lab-wide workload proxy: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
+    lines.push('Full-use empirical saturation (SemiAnalysis June 2026, weekly caps exhausted; July audit ≥39x lower bound)');
+    lines.push('Not the plan-official 5x/20x labels; scenario workload, no guaranteed current capacity');
+  } else if (d.kind === 'codex') {
+    const pct = Math.round(d.utilization * 100);
+    lines.push(`ChatGPT Pro/Codex $${d.fee} lab-wide workload proxy: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
+    lines.push('Full-use empirical saturation (SemiAnalysis June 2026; Aug audit 29.81x is a lower bound, not plotted)');
+    lines.push('Not the plan-official 5x/20x labels; scenario workload, no guaranteed current capacity');
+  } else if (d.kind === 'cursor-ultra') {
+    const pct = Math.round(d.utilization * 100);
+    lines.push(`Cursor Ultra $${d.fee} third-party allowance est.: measured ${formatUsd(d.baseCost)} / (~${d.multiplier}x × ${pct}% use)`);
+    lines.push('Last-published $400 pool basis thru Aug 2026; current pool size unverified (docs only say “Included”)');
+    lines.push('Claude/GPT/Gemini pool rows only (Fable via this pool); Meta/Grok/Composer pools excluded');
   } else {
     const pct = Math.round(d.utilization * 100);
     lines.push(`Quota-equiv: measured ${formatUsd(d.baseCost)} × $10 / ($${d.tier} tier × ${pct}% use)`);
@@ -270,9 +288,9 @@ function layout(zMax, subscriptionOn = false, xRange, yRange) {
       ? 'Time per task, s (log, lower is better)'
       : 'Throughput, tok/s (log, higher is better)';
   // Contributor estimates are always plotted (distinct token tariff); the
-  // subscription toggle only adds Go quota-equiv estimates on top.
+  // subscription toggle only adds subscription estimates on top.
   const xTitle = subscriptionOn
-    ? 'Cost per task, USD (log; Contributor + Go subscription estimates)'
+    ? 'Cost per task, USD (log; Contributor + subscription estimates)'
     : 'Cost per task, USD (log; Contributor estimates)';
   return {
     autosize: true,
@@ -338,13 +356,39 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
   const frontierIds = new Set(frontier.map((m) => m.id));
   // Estimates stay in their own labeled traces even when they land on the
   // frontier, so measured points and estimates are never mixed. Contributor
-  // (distinct token tariff) is separate from Go subscription quota-equiv
-  // estimates (including compounded Contributor-via-Go).
+  // (distinct token tariff) is separate from the subscription offers, and
+  // each subscription offer gets its own trace (distinct marker symbol, same
+  // provider colors) so billing offers are visually distinguishable under the
+  // single subscription toggle.
   const contributorShown = shown.filter((m) => m.deal?.kind === 'contributor');
-  const subscriptionShown = shown.filter((m) => m.deal && m.deal.kind !== 'contributor');
+  const goShown = shown.filter((m) => m.deal?.kind === 'go' || m.deal?.kind === 'contributor-go');
+  const claudeMaxShown = shown.filter((m) => m.deal?.kind === 'claude-max');
+  const codexShown = shown.filter((m) => m.deal?.kind === 'codex');
+  const cursorUltraShown = shown.filter((m) => m.deal?.kind === 'cursor-ultra');
   const rest = shown.filter((m) => !m.deal && !frontierIds.has(m.id));
   const front = shown.filter((m) => !m.deal && frontierIds.has(m.id));
   const colorOf = (m) => colors.get(m.creator) ?? '#888';
+
+  // One estimate trace per billing offer: same lab colors, distinct symbols.
+  function estimateTrace(name, points, symbol) {
+    return {
+      name,
+      type: 'scatter3d',
+      mode: 'markers',
+      x: points.map((m) => m.cost),
+      y: points.map((m) => speedValue(m)),
+      z: points.map((m) => m.iq),
+      text: points.map(hoverText),
+      hoverinfo: 'none',
+      marker: {
+        size: 5,
+        opacity: 0.9,
+        symbol,
+        color: points.map(colorOf),
+        line: { color: '#ffffff', width: 1 },
+      },
+    };
+  }
 
   const data = [
     {
@@ -392,42 +436,19 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
   const corner = preferredCornerTrace(domainForBox ?? shown, speedMode, zCeiling);
   if (corner) data.push(corner);
   if (contributorShown.length) {
-    data.push({
-      name: CONTRIBUTOR_TRACE_NAME,
-      type: 'scatter3d',
-      mode: 'markers',
-      x: contributorShown.map((m) => m.cost),
-      y: contributorShown.map((m) => speedValue(m)),
-      z: contributorShown.map((m) => m.iq),
-      text: contributorShown.map(hoverText),
-      hoverinfo: 'none',
-      marker: {
-        size: 5,
-        opacity: 0.9,
-        symbol: 'diamond',
-        color: contributorShown.map(colorOf),
-        line: { color: '#ffffff', width: 1 },
-      },
-    });
+    data.push(estimateTrace(CONTRIBUTOR_TRACE_NAME, contributorShown, 'diamond'));
   }
-  if (subscriptionShown.length) {
-    data.push({
-      name: SUBSCRIPTION_TRACE_NAME,
-      type: 'scatter3d',
-      mode: 'markers',
-      x: subscriptionShown.map((m) => m.cost),
-      y: subscriptionShown.map((m) => speedValue(m)),
-      z: subscriptionShown.map((m) => m.iq),
-      text: subscriptionShown.map(hoverText),
-      hoverinfo: 'none',
-      marker: {
-        size: 5,
-        opacity: 0.9,
-        symbol: 'diamond',
-        color: subscriptionShown.map(colorOf),
-        line: { color: '#ffffff', width: 1 },
-      },
-    });
+  if (goShown.length) {
+    data.push(estimateTrace(GO_TRACE_NAME, goShown, 'square'));
+  }
+  if (claudeMaxShown.length) {
+    data.push(estimateTrace(CLAUDE_MAX_TRACE_NAME, claudeMaxShown, 'cross'));
+  }
+  if (codexShown.length) {
+    data.push(estimateTrace(CODEX_TRACE_NAME, codexShown, 'x'));
+  }
+  if (cursorUltraShown.length) {
+    data.push(estimateTrace(CURSOR_ULTRA_TRACE_NAME, cursorUltraShown, 'diamond-open'));
   }
   return data;
 }
@@ -710,7 +731,7 @@ async function init() {
   state.utilization = parseUtilizationPercent(els.dealsUtil?.value ?? '100');
   if (els.dealsNote) {
     els.dealsNote.textContent =
-      `Contributor always on; Go subscription estimates off by default. Curated ${DEALS_REVIEWED} from Meta/OpenCode Go docs.`;
+      `Contributor always on; subscription estimates off by default. Curated ${DEALS_REVIEWED} from Meta/OpenCode Go docs; scenarios from June 2026 audits.`;
   }
   state.era = Math.max(...state.payload.eras.map((e) => e.index));
   buildEraOptions();

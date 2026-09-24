@@ -18,10 +18,16 @@ import {
   buildSubscriptionPoints,
   CONTRIBUTOR_TRACE_NAME,
   SUBSCRIPTION_TRACE_NAME,
+  SUBSCRIPTION_TRACE_NAMES,
+  GO_TRACE_NAME,
+  CLAUDE_MAX_TRACE_NAME,
+  CODEX_TRACE_NAME,
+  CURSOR_ULTRA_TRACE_NAME,
   DEALS_TRACE_NAME,
   dealLabel,
   dealAssumption,
   parseUtilizationPercent,
+  estimateSubscriptionCost,
   logAxisRange,
   eraDomainPoints,
   eraChartDomains,
@@ -29,7 +35,18 @@ import {
   resolveHoverAnchor,
   HOVER_TOOLTIP_OFFSET,
 } from './lib.js';
-import { DEAL_ENTRIES, GO_TIERS } from './deals.js';
+import {
+  DEAL_ENTRIES,
+  GO_TIERS,
+  CLAUDE_MAX_MULTIPLIER,
+  CODEX_MULTIPLIER,
+  CURSOR_ULTRA_MULTIPLIER,
+  isClaudeMaxEligible,
+  isCodexEligible,
+  isGeminiCursorEligible,
+  isCursorClaudeEligible,
+  isCursorUltraEligible,
+} from './deals.js';
 
 function model(overrides = {}) {
   return {
@@ -1069,13 +1086,26 @@ describe('Contributor always-on split', () => {
   it('labels Contributor and subscription traces separately, never as measured', () => {
     expect(CONTRIBUTOR_TRACE_NAME).toMatch(/Contributor/i);
     expect(CONTRIBUTOR_TRACE_NAME).toMatch(/estimat/i);
-    expect(SUBSCRIPTION_TRACE_NAME).toMatch(/Subscription/i);
-    expect(SUBSCRIPTION_TRACE_NAME).toMatch(/Go/i);
+    expect(SUBSCRIPTION_TRACE_NAME).toBe('Subscription estimates');
+    expect(SUBSCRIPTION_TRACE_NAME).not.toMatch(/Go only/);
     expect(CONTRIBUTOR_TRACE_NAME).not.toBe(SUBSCRIPTION_TRACE_NAME);
     expect(CONTRIBUTOR_TRACE_NAME).not.toMatch(/measured/i);
     expect(SUBSCRIPTION_TRACE_NAME).not.toMatch(/measured/i);
     // Legacy alias still resolves to the subscription trace.
     expect(DEALS_TRACE_NAME).toBe(SUBSCRIPTION_TRACE_NAME);
+  });
+
+  it('names each subscription offer distinctly for hover, table and legend', () => {
+    expect(CLAUDE_MAX_TRACE_NAME).toBe('Claude Max $200 ~40x est.');
+    expect(CODEX_TRACE_NAME).toBe('ChatGPT Pro/Codex $200 ~70x est.');
+    expect(CURSOR_ULTRA_TRACE_NAME).toBe('Cursor Ultra $200 ~2x est.');
+    expect(GO_TRACE_NAME).toMatch(/Go/i);
+    expect(new Set(SUBSCRIPTION_TRACE_NAMES)).toEqual(
+      new Set([GO_TRACE_NAME, CLAUDE_MAX_TRACE_NAME, CODEX_TRACE_NAME, CURSOR_ULTRA_TRACE_NAME]),
+    );
+    expect(dealLabel({ kind: 'claude-max' })).toBe(CLAUDE_MAX_TRACE_NAME);
+    expect(dealLabel({ kind: 'codex' })).toBe(CODEX_TRACE_NAME);
+    expect(dealLabel({ kind: 'cursor-ultra' })).toBe(CURSOR_ULTRA_TRACE_NAME);
   });
 
   it('splits direct Contributor from subscription estimates without mutating rows', () => {
@@ -1145,5 +1175,226 @@ describe('Contributor always-on split', () => {
         (m) => m.creator === 'Z AI',
       ),
     ).toBe(true);
+  });
+});
+
+describe('subscription scenario cost math', () => {
+  it('divides the measured cost by the sourced full-use multiplier', () => {
+    expect(estimateSubscriptionCost(8, 40)).toBeCloseTo(0.2, 10);
+    expect(estimateSubscriptionCost(7, 70)).toBeCloseTo(0.1, 10);
+    expect(estimateSubscriptionCost(1, 2)).toBeCloseTo(0.5, 10);
+    expect(CLAUDE_MAX_MULTIPLIER).toBe(40);
+    expect(CODEX_MULTIPLIER).toBe(70);
+    expect(CURSOR_ULTRA_MULTIPLIER).toBe(2);
+  });
+
+  it('raises the effective cost when only part of the saturating workload is used', () => {
+    expect(estimateSubscriptionCost(8, 40, { utilization: 0.5 })).toBeCloseTo(0.4, 10);
+  });
+
+  it('clamps over-use to full use instead of discounting further', () => {
+    expect(estimateSubscriptionCost(8, 40, { utilization: 2 })).toBeCloseTo(0.2, 10);
+  });
+
+  it('rejects non-positive costs, multipliers and invalid utilization', () => {
+    expect(estimateSubscriptionCost(0, 40)).toBeNull();
+    expect(estimateSubscriptionCost(-1, 40)).toBeNull();
+    expect(estimateSubscriptionCost(8, 0)).toBeNull();
+    expect(estimateSubscriptionCost(8, -40)).toBeNull();
+    expect(estimateSubscriptionCost(8, NaN)).toBeNull();
+    expect(estimateSubscriptionCost(8, 40, { utilization: 0 })).toBeNull();
+    expect(estimateSubscriptionCost(8, 40, { utilization: NaN })).toBeNull();
+  });
+});
+
+describe('subscription scenario scope', () => {
+  it('covers live Claude Opus/Sonnet/Haiku rows for the Claude Max proxy', () => {
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'claude-opus-5-xhigh', retired: false }))).toBe(true);
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'claude-sonnet-5-low', retired: false }))).toBe(true);
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'claude-4-5-haiku-reasoning', retired: false }))).toBe(true);
+  });
+
+  it('withholds the Claude Max proxy from Fable reduced-limit rows, retired rows and other labs', () => {
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'claude-fable-5-1-max', retired: false }))).toBe(false);
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'claude-opus-5-xhigh', retired: true }))).toBe(false);
+    expect(isClaudeMaxEligible(model({ creator: 'OpenAI', id: 'claude-opus-5-xhigh', retired: false }))).toBe(false);
+    expect(isClaudeMaxEligible(model({ creator: 'Anthropic', id: 'mythos-1', retired: false }))).toBe(false);
+  });
+
+  it('includes Fable in the Cursor Claude pool but never in the 40x proxy', () => {
+    const fable = model({ creator: 'Anthropic', id: 'claude-fable-5-1-max', retired: false });
+
+    expect(isCursorClaudeEligible(fable)).toBe(true);
+    expect(isCursorUltraEligible(fable)).toBe(true);
+    expect(isClaudeMaxEligible(fable)).toBe(false);
+    expect(isCursorClaudeEligible(model({ creator: 'Anthropic', id: 'claude-opus-5-xhigh', retired: false }))).toBe(true);
+    expect(isCursorClaudeEligible(model({ creator: 'Anthropic', id: 'claude-mythos-1', retired: false }))).toBe(false);
+    expect(isCursorClaudeEligible(model({ creator: 'Anthropic', id: 'claude-fable-5-1-max', retired: true }))).toBe(false);
+    expect(isCursorClaudeEligible(model({ creator: 'OpenAI', id: 'claude-opus-5-xhigh', retired: false }))).toBe(false);
+  });
+
+  it('covers live GPT subscription rows but not open-weights builds', () => {
+    expect(isCodexEligible(model({ creator: 'OpenAI', id: 'gpt-5-5-high', retired: false }))).toBe(true);
+    expect(isCodexEligible(model({ creator: 'OpenAI', id: 'gpt-6-sol-max', retired: false }))).toBe(true);
+    expect(isCodexEligible(model({ creator: 'OpenAI', id: 'gpt-oss-120b-high', retired: false }))).toBe(false);
+    expect(isCodexEligible(model({ creator: 'OpenAI', id: 'gpt-5-5-high', retired: true }))).toBe(false);
+    expect(isCodexEligible(model({ creator: 'Anthropic', id: 'gpt-5-5-high', retired: false }))).toBe(false);
+  });
+
+  it('limits the Cursor Ultra pool to Claude, GPT and Gemini rows', () => {
+    const claude = model({ creator: 'Anthropic', id: 'claude-sonnet-5-low', retired: false });
+    const gpt = model({ creator: 'OpenAI', id: 'gpt-5-5-high', retired: false });
+    const gemini = model({ creator: 'Google', id: 'gemini-3-8-flash-high', retired: false });
+
+    expect(isCursorUltraEligible(claude)).toBe(true);
+    expect(isCursorUltraEligible(gpt)).toBe(true);
+    expect(isCursorUltraEligible(gemini)).toBe(true);
+    expect(isGeminiCursorEligible(gemini)).toBe(true);
+    expect(isCursorUltraEligible(model({ creator: 'Meta', id: 'muse-spark-1-3-xhigh', retired: false }))).toBe(false);
+    expect(isCursorUltraEligible(model({ creator: 'SpaceXAI', id: 'grok-4-7-high', retired: false }))).toBe(false);
+    expect(isCursorUltraEligible(model({ creator: 'DeepSeek', id: 'deepseek-v4-1-flash-reasoning-max-effort', retired: false }))).toBe(false);
+    expect(isCursorUltraEligible(model({ creator: 'Google', id: 'gemini-3-8-flash-high', retired: true }))).toBe(false);
+  });
+});
+
+describe('subscription scenario points', () => {
+  function opusRow(overrides = {}) {
+    return model({
+      id: 'claude-opus-5-xhigh',
+      name: 'Claude Opus 5 (xhigh)',
+      creator: 'Anthropic',
+      iq: 49.7,
+      cost: 4.877844,
+      time_sec: 100,
+      tps: 60,
+      ...overrides,
+    });
+  }
+
+  function gptRow(overrides = {}) {
+    return model({
+      id: 'gpt-5-5-high',
+      name: 'GPT-5.5 (high)',
+      creator: 'OpenAI',
+      iq: 37,
+      cost: 1.541289,
+      time_sec: 50,
+      tps: 120,
+      ...overrides,
+    });
+  }
+
+  it('derives a Claude Max point at base ÷ 40 with inherited benchmark values', () => {
+    const [point] = buildDealPoints([opusRow()], { era: 1 }).filter(
+      (p) => p.deal?.kind === 'claude-max',
+    );
+
+    expect(point.id).toBe('sub:claude-opus-5-xhigh:claude-max40x');
+    expect(point.name).toBe('Claude Opus 5 (xhigh) (Claude Max $200 ~40x est.)');
+    expect(point.cost).toBeCloseTo(4.877844 / 40, 10);
+    expect(point.iq).toBe(49.7);
+    expect(point.time_sec).toBe(100);
+    expect(point.deal).toMatchObject({ fee: 200, multiplier: 40, baseCost: 4.877844, utilization: 1 });
+  });
+
+  it('derives Codex and Cursor Ultra points for GPT rows, Cursor only for Gemini rows', () => {
+    const gemini = model({
+      id: 'gemini-3-8-flash-high',
+      name: 'Gemini 3.8 Flash (high)',
+      creator: 'Google',
+      iq: 40.9,
+      cost: 1.242795,
+      time_sec: 70,
+      tps: 90,
+    });
+    const points = buildDealPoints([gptRow(), gemini], { era: 1 });
+    const kindsFor = (id) => points.filter((p) => p.id.startsWith(`sub:${id}:`)).map((p) => p.deal.kind).sort();
+
+    expect(kindsFor('gpt-5-5-high')).toEqual(['codex', 'cursor-ultra']);
+    expect(kindsFor('gemini-3-8-flash-high')).toEqual(['cursor-ultra']);
+    const codex = points.find((p) => p.deal?.kind === 'codex');
+    expect(codex.cost).toBeCloseTo(1.541289 / 70, 10);
+    expect(codex.name).toContain('ChatGPT Pro/Codex $200 ~70x est.');
+    const ultra = points.find((p) => p.id === 'sub:gemini-3-8-flash-high:cursor-ultra2x');
+    expect(ultra.cost).toBeCloseTo(1.242795 / 2, 10);
+  });
+
+  it('grants no scenario points to retired rows, other eras, or out-of-scope labs', () => {
+    const rows = [
+      opusRow({ retired: true }),
+      opusRow({ id: 'other-era-opus', era: 0 }),
+      model({ id: 'grok-4-7-high', creator: 'SpaceXAI', iq: 46.3, cost: 2.726107, retired: false }),
+      model({ id: 'muse-spark-1-3-xhigh', creator: 'Meta', iq: 45.1, cost: 1.367794, retired: false }),
+      model({ id: 'claude-mythos-1', name: 'Mythos', creator: 'Anthropic', iq: 50, cost: 5, retired: false }),
+      model({ id: 'gpt-oss-120b-high', creator: 'OpenAI', iq: 11.6, cost: 0.107425, retired: false }),
+    ];
+
+    const scenarios = buildDealPoints(rows, { era: 1 }).filter(
+      (p) => p.deal?.kind === 'claude-max' || p.deal?.kind === 'codex' || p.deal?.kind === 'cursor-ultra',
+    );
+
+    expect(scenarios).toEqual([]);
+  });
+
+  it('gives Fable a Cursor pool point only, never the 40x proxy', () => {
+    const fable = model({
+      id: 'claude-fable-5-1-max',
+      name: 'Claude Fable (max)',
+      creator: 'Anthropic',
+      iq: 50,
+      cost: 5,
+      time_sec: 90,
+      tps: 55,
+    });
+
+    const points = buildDealPoints([fable], { era: 1 });
+    const kinds = points.map((p) => p.deal.kind);
+
+    expect(kinds).toEqual(['cursor-ultra']);
+    expect(points[0].cost).toBeCloseTo(5 / 2, 10);
+    expect(points[0].name).toContain('Cursor Ultra $200 ~2x est.');
+  });
+
+  it('scales scenario costs with workload use and labels them as proxies, not measurements', () => {
+    const [half] = buildDealPoints([opusRow()], { era: 1, utilization: 0.5 }).filter(
+      (p) => p.deal?.kind === 'claude-max',
+    );
+    const [full] = buildDealPoints([opusRow()], { era: 1, utilization: 1 }).filter(
+      (p) => p.deal?.kind === 'claude-max',
+    );
+
+    expect(half.cost).toBeCloseTo(full.cost * 2, 10);
+    expect(dealAssumption(half.deal)).toMatch(/lab-wide workload proxy/i);
+    expect(dealAssumption(half.deal)).toMatch(/not the plan-official 5x\/20x/i);
+    expect(dealAssumption({ kind: 'codex', fee: 200, multiplier: 70, utilization: 1 })).toMatch(/29\.81x/);
+    expect(dealAssumption({ kind: 'cursor-ultra', fee: 200, pool: 400, multiplier: 2, utilization: 1 })).toMatch(/unverified/i);
+    expect(half.name).not.toMatch(/measured/i);
+  });
+
+  it('keeps every scenario estimate in the stable domain while the toggle is off', () => {
+    const rows = [opusRow(), gptRow()];
+
+    const points = eraDomainPoints(rows, { era: 1, utilization: 1 });
+    const kinds = points.filter((p) => p.deal).map((p) => p.deal.kind);
+
+    expect(kinds).toEqual(expect.arrayContaining(['claude-max', 'codex', 'cursor-ultra']));
+    const domains = eraChartDomains(rows, { era: 1, speedMode: 'time', utilization: 1 });
+    const cheapest = Math.min(...buildDealPoints(rows, { era: 1 }).map((d) => d.cost));
+    expect(domains.xBounds[0]).toBeCloseTo(cheapest, 10);
+  });
+
+  it('splits scenario estimates from Contributor without mutating rows', () => {
+    const rows = Object.freeze([Object.freeze(opusRow()), Object.freeze(gptRow())]);
+    const before = JSON.stringify(rows);
+
+    const contributor = buildContributorPoints(rows, { era: 1 });
+    const subscription = buildSubscriptionPoints(rows, { era: 1 });
+
+    expect(JSON.stringify(rows)).toBe(before);
+    expect(contributor).toEqual([]);
+    expect(subscription.every((p) => p.deal.kind !== 'contributor')).toBe(true);
+    expect(subscription.map((p) => p.deal.kind).sort()).toEqual(
+      ['claude-max', 'codex', 'cursor-ultra', 'cursor-ultra'],
+    );
   });
 });
