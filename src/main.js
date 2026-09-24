@@ -10,7 +10,8 @@ import {
   formatNum,
   resolveDataUrl,
   disablePreferredBoxPick,
-  buildDealPoints,
+  buildContributorPoints,
+  buildSubscriptionPoints,
   dealLabel,
   dealAssumption,
   parseUtilizationPercent,
@@ -19,7 +20,8 @@ import {
   computeHoverTooltipPosition,
   resolveHoverAnchor,
   HOVER_TOOLTIP_OFFSET,
-  DEALS_TRACE_NAME,
+  CONTRIBUTOR_TRACE_NAME,
+  SUBSCRIPTION_TRACE_NAME,
 } from './lib.js';
 import { DEALS_REVIEWED } from './deals.js';
 
@@ -56,6 +58,7 @@ const state = {
   openOnly: false,
   includeRetired: false,
   frontierOnly: false,
+  // Subscription toggle only: direct Contributor estimates are always on.
   dealsEnabled: false,
   utilization: 1,
   sortKey: 'iq',
@@ -72,12 +75,22 @@ function speedValue(m) {
   return m[SPEED_MODES[state.speedMode].key];
 }
 
-/** Measured rows plus derived deal estimates when the toggle is on. */
+/**
+ * Measured rows plus estimates: direct Contributor repricings are always on
+ * (distinct token tariff, separate trace); Go subscription estimates
+ * (quota-equiv, including compounded Contributor-via-Go) join only when the
+ * subscription toggle is on. Estimates flow through the same
+ * search/provider/era/retired/frontier filters; measured rows are never
+ * mutated.
+ */
 function combinedModels() {
   if (!state.payload) return [];
-  if (!state.dealsEnabled) return state.payload.models;
+  const opts = { era: state.era, utilization: state.utilization };
+  const contributor = buildContributorPoints(state.payload.models, opts);
+  if (!state.dealsEnabled) return state.payload.models.concat(contributor);
   return state.payload.models.concat(
-    buildDealPoints(state.payload.models, { era: state.era, utilization: state.utilization }),
+    contributor,
+    buildSubscriptionPoints(state.payload.models, opts),
   );
 }
 
@@ -250,15 +263,17 @@ function wireHoverTooltip() {
   }
 }
 
-function layout(zMax, dealsOn = false, xRange, yRange) {
+function layout(zMax, subscriptionOn = false, xRange, yRange) {
   const mode = SPEED_MODES[state.speedMode];
   const yTitle =
     state.speedMode === 'time'
       ? 'Time per task, s (log, lower is better)'
       : 'Throughput, tok/s (log, higher is better)';
-  const xTitle = dealsOn
-    ? 'Cost per task, USD (log; deals: quota-equiv estimates)'
-    : 'Cost per task, USD (log)';
+  // Contributor estimates are always plotted (distinct token tariff); the
+  // subscription toggle only adds Go quota-equiv estimates on top.
+  const xTitle = subscriptionOn
+    ? 'Cost per task, USD (log; Contributor + Go subscription estimates)'
+    : 'Cost per task, USD (log; Contributor estimates)';
   return {
     autosize: true,
     margin: { l: 0, r: 0, t: 30, b: 0 },
@@ -321,9 +336,12 @@ function preferredCornerTrace(domainPoints, speedMode, zCeiling) {
 
 function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
   const frontierIds = new Set(frontier.map((m) => m.id));
-  // Deal estimates stay in their own labeled trace even when they land on
-  // the frontier, so measured points and estimates are never mixed.
-  const dealsShown = shown.filter((m) => m.deal);
+  // Estimates stay in their own labeled traces even when they land on the
+  // frontier, so measured points and estimates are never mixed. Contributor
+  // (distinct token tariff) is separate from Go subscription quota-equiv
+  // estimates (including compounded Contributor-via-Go).
+  const contributorShown = shown.filter((m) => m.deal?.kind === 'contributor');
+  const subscriptionShown = shown.filter((m) => m.deal && m.deal.kind !== 'contributor');
   const rest = shown.filter((m) => !m.deal && !frontierIds.has(m.id));
   const front = shown.filter((m) => !m.deal && frontierIds.has(m.id));
   const colorOf = (m) => colors.get(m.creator) ?? '#888';
@@ -366,27 +384,47 @@ function traces(shown, frontier, colors, speedMode, zCeiling, domainForBox) {
       },
     },
   ];
-  // The green box marks the full era domain (all measured rows plus eligible
-  // deal estimates, including retired), not the filtered shown subset, so it
-  // stays fixed across search/provider/open/retired/frontier toggles and
-  // reaches the fixed intelligence ceiling.
+  // The green box marks the full era domain (all measured rows plus
+  // eligible Contributor and Go estimates, including retired), not the
+  // filtered shown subset, so it stays fixed across
+  // search/provider/open/retired/frontier/subscription toggles and reaches
+  // the fixed intelligence ceiling.
   const corner = preferredCornerTrace(domainForBox ?? shown, speedMode, zCeiling);
   if (corner) data.push(corner);
-  if (dealsShown.length) {
+  if (contributorShown.length) {
     data.push({
-      name: DEALS_TRACE_NAME,
+      name: CONTRIBUTOR_TRACE_NAME,
       type: 'scatter3d',
       mode: 'markers',
-      x: dealsShown.map((m) => m.cost),
-      y: dealsShown.map((m) => speedValue(m)),
-      z: dealsShown.map((m) => m.iq),
-      text: dealsShown.map(hoverText),
+      x: contributorShown.map((m) => m.cost),
+      y: contributorShown.map((m) => speedValue(m)),
+      z: contributorShown.map((m) => m.iq),
+      text: contributorShown.map(hoverText),
       hoverinfo: 'none',
       marker: {
         size: 5,
         opacity: 0.9,
         symbol: 'diamond',
-        color: dealsShown.map(colorOf),
+        color: contributorShown.map(colorOf),
+        line: { color: '#ffffff', width: 1 },
+      },
+    });
+  }
+  if (subscriptionShown.length) {
+    data.push({
+      name: SUBSCRIPTION_TRACE_NAME,
+      type: 'scatter3d',
+      mode: 'markers',
+      x: subscriptionShown.map((m) => m.cost),
+      y: subscriptionShown.map((m) => speedValue(m)),
+      z: subscriptionShown.map((m) => m.iq),
+      text: subscriptionShown.map(hoverText),
+      hoverinfo: 'none',
+      marker: {
+        size: 5,
+        opacity: 0.9,
+        symbol: 'diamond',
+        color: subscriptionShown.map(colorOf),
         line: { color: '#ffffff', width: 1 },
       },
     });
@@ -413,10 +451,12 @@ async function render() {
     : tableBase;
   const colors = buildProviderColors(eraModels.map((m) => m.creator));
   // Fixed grid: domains span the full era population (measured plus eligible
-  // deal estimates at the active utilization, including retired) before any
-  // search/provider/open/retired/frontier filtering, so the axes and the
-  // green box stay put while the plotted subset changes. Switching speed
-  // recomputes y in the new units; switching eras re-scopes everything.
+  // Contributor and Go estimates at the active utilization, including
+  // retired) before any search/provider/open/retired/frontier filtering, so
+  // the axes and the green box stay put while the plotted subset changes.
+  // Toggling subscription estimates never rescales (they stay in the
+  // domain). Switching speed recomputes y in the new units; switching eras
+  // re-scopes everything.
   const now = Date.now();
   const domains = eraChartDomains(state.payload.models, {
     era: state.era,
@@ -435,9 +475,12 @@ async function render() {
 
   // Counts and the data table always update, even when WebGL is unavailable.
   const live = eraModels.filter((m) => !m.retired).length;
+  const nContributor = shown.filter((m) => m.deal?.kind === 'contributor').length;
+  const nSubscription = shown.filter((m) => m.deal && m.deal.kind !== 'contributor').length;
   els.counts.textContent =
     `${shown.length} plotted · ${tableBase.length} in era (${live} live) · ${frontier.length} frontier` +
-    (state.dealsEnabled ? ` · ${shown.filter((m) => m.deal).length} deal estimates` : '');
+    ` · ${nContributor} Contributor estimates` +
+    (state.dealsEnabled ? ` · ${nSubscription} subscription estimates` : '');
   renderTable(tableShown, frontierIds);
   if (!state.webgl) return;
 
@@ -667,7 +710,7 @@ async function init() {
   state.utilization = parseUtilizationPercent(els.dealsUtil?.value ?? '100');
   if (els.dealsNote) {
     els.dealsNote.textContent =
-      `Estimates curated ${DEALS_REVIEWED} from Meta/OpenCode Go docs; off by default.`;
+      `Contributor always on; Go subscription estimates off by default. Curated ${DEALS_REVIEWED} from Meta/OpenCode Go docs.`;
   }
   state.era = Math.max(...state.payload.eras.map((e) => e.index));
   buildEraOptions();

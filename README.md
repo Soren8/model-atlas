@@ -70,12 +70,13 @@ readable by the unprivileged nginx process.
   (higher intelligence, lower cost, better speed); ties are kept together.
 - Axes stay fixed per era/speed view. Cost (log), speed (log) and
   intelligence span the full selected-era population — every measured row
-  plus every eligible deal estimate at the active quota use, including
-  retired models — computed before search/provider/open/retired/frontier
-  filtering, so the grid never rescales while filtering. Toggling Deals
-  on/off does not rescale (estimates are always in the domain); only quota
-  use, promo expiry, speed-metric switches (new units) and era switches
-  legitimately recompute. Log ranges use log10 with endpoint padding and
+  plus every eligible Contributor and Go estimate at the active quota use,
+  including retired models — computed before
+  search/provider/open/retired/frontier/subscription filtering, so the grid
+  never rescales while filtering. Toggling subscription estimates on/off does
+  not rescale (Contributor plus eligible Go estimates are always in the
+  domain); only quota use, promo expiry, speed-metric switches (new units)
+  and era switches legitimately recompute. Log ranges use log10 with endpoint padding and
   singleton expansion so all plottable points (including frontier extremes)
   sit inside; eras with no speed measurements leave speed to autorange.
 - The green “Preferred corner” box marks the cheaper/faster/smarter octant of
@@ -96,25 +97,68 @@ readable by the unprivileged nginx process.
   reviewed 2026-09-24). Unknown future providers fall back to neutral gray;
   dark fills stay readable via a light dot outline.
 
-## Deals (estimates, off by default)
+## Estimates: Contributor (always on) vs subscription (Go only, off by default)
 
-The **Deals** toggle adds separately labeled estimate points next to the
-measured ones; the cost axis title says so while they are shown. Estimates
-inherit benchmark intelligence/speed (not provider measurements), flow
-through the same filters/frontier/ceiling/speed logic, and carry pricing
-terms in hover text and the table Terms column. Each assumes benchmark cost
-meters at Go rates (never exact parity) with the full budget on the modeled
-tier. Mapping: `src/deals.js` — hand-curated from the
+Direct **Contributor** repricings use the distinct Meta token tariff and are
+always plotted in their own `Contributor (estimates)` trace alongside the
+measured rows (same search/provider/era/retired/frontier/ceiling/speed
+filtering; upstream measured rows never mutated). Cost is the Standard
+measured cost repriced at Contributor rates ($0.15/$1.25/$4.25 perM vs
+$0.002/$0.10/$0.20 cached/input/output) under an assumed 7:2:1 mix
+(.0414/.78, no per-task token counts published); intelligence/speed are
+inherited benchmark values, never provider-measured and never labeled
+measured. Hover/table terms say `Contributor est.` with the assumption.
+Muse Spark 1.3 (xhigh) and 1.2 (xhigh) only — `(max)` is Standard-only and
+stays measured-only.
+
+The **Subscription estimates (Go only)** toggle (off by default) adds Go
+quota-equiv estimates in a separate `Subscription estimates (Go only)` trace,
+including compounded Contributor-via-Go for the Muse Spark Contributor rows.
+Each assumes benchmark cost meters at Go rates (never exact parity) with the
+full $10/mo budget on the modeled tier. Mapping: `src/deals.js` —
+hand-curated from the
 [Meta](https://dev.meta.ai/docs/pricing-rate-limits)
 ([reasoning](https://dev.meta.ai/docs/reasoning),
 [models](https://dev.meta.ai/docs/models)) and
 [OpenCode Go](https://opencode.ai/docs/go/) docs, exact snapshot-id match,
 current era only, never auto-rescraped. Sources reviewed 2026-09-24;
-re-review when tiers/prices/promos change. Priority: Muse Spark 1.3/1.2
-(xhigh) Contributor repricing (assumed 7:2:1 mix); Go quota-equivalents at
-the notable $30/$60 tiers only ($15 omitted; V4.1 Flash uses the active $60
+re-review when tiers/prices/promos change. Go quota-equivalents at the
+notable $30/$60 tiers only ($15 omitted; V4.1 Flash uses the active $60
 promo until 2026-09-28T00:00Z, then disappears). Uncertain aliases, dated
 versions, free promos and Standard-only (max) efforts are omitted.
+
+### Other subscriptions researched (not plotted)
+
+Reviewed 2026-09-24; not plotted — plan-to-API arithmetic without a fixed
+included API-dollar pool would be opaque. A comparable per-task ratio would
+need actual token usage including caches plus the plan's usage limits.
+
+- GitHub Copilot
+  ([billing](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals)):
+  Pro $10 includes $15 (1.5x), Pro+ $39 includes $70 (1.79x), Max $100
+  includes $200 (2x); totals flex and may change. Credits are
+  dollar-denominated but API parity is unverified, so the credit-allowance
+  ratio is not an AA-task exact cost.
+- Anthropic
+  ([Max plan](https://support.claude.com/en/articles/11049741-what-is-the-max-plan)):
+  Pro $20, Max $100 5x / $200 20x refers to Pro per-5h usage, not an
+  API-dollar ratio; weekly additional caps, no fixed included dollars.
+- OpenAI
+  ([pro tiers](https://help.openai.com/en/articles/9793128-about-chatgpt-pro-tiers)):
+  Plus $20, Pro $100 5x / $200 20x; Pro $200 new signups paused since
+  Sep 10 2026 (existing renew). Quotas depend on tokens/task
+  ([codex pricing](https://chatgpt.com/codex/pricing/)), no included API
+  dollar pool.
+- Cursor ([models and pricing](https://cursor.com/docs/models-and-pricing)):
+  plan rates $20/$60/$200, but the current body only says included pools
+  with no dollar sizes; unverified indexed $20/$70/$400 figures are not
+  published here.
+
+Empirical note (not in UI): a Claude Max $200 self-audit
+([subscription vs API cost audit](https://atticusli.com/blog/posts/claude-code-subscription-vs-api-cost-audit/))
+via ccusage reports May $237.08 ⇒ 1.19x, Jun $214.91 ⇒ 1.07x, Jul 1–20
+$7814.13 ⇒ 39.07x vs the full $200 fee — a partial month, not a monthly
+guarantee.
 
 Hover shows an offset HTML card with a pointer to the dot (never centered
 over it); Plotly gl3d offers no public hover-card offset, so the built-in

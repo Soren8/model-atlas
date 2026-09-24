@@ -354,7 +354,7 @@ describe('intelligence axis ceiling', () => {
     expect(Math.max(...corner.z)).toBe(50);
   });
 
-describe('deals toggle', () => {
+describe('subscription toggle (Contributor always on)', () => {
   const DEALS_FIXTURE = FIXTURE
     .replace(
       '<input id="frontier-only" type="checkbox" />',
@@ -385,30 +385,46 @@ describe('deals toggle', () => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => DEALS_PAYLOAD });
   }
 
-  function dealsTrace(Plotly) {
-    return lastCall(Plotly)[1].find((t) => t.name === 'Deals (estimates)');
+  function contributorTrace(Plotly) {
+    return lastCall(Plotly)[1].find((t) => t.name === 'Contributor (estimates)');
   }
 
-  it('stays off by default: measured points only, plain cost axis', async () => {
+  function subscriptionTrace(Plotly) {
+    return lastCall(Plotly)[1].find((t) => t.name === 'Subscription estimates (Go only)');
+  }
+
+  it('keeps Contributor always on while subscription stays off by default', async () => {
     useDealsDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
-    expect(dealsTrace(Plotly)).toBeUndefined();
+    // Direct Contributor (distinct token tariff) is always plotted in its own
+    // trace; Go subscription estimates wait for the toggle.
+    const contributor = contributorTrace(Plotly);
+    expect(contributor).toBeDefined();
+    expect(contributor.type).toBe('scatter3d');
+    expect(contributor.marker.symbol).toBe('diamond');
+    expect(contributor.x).toHaveLength(1);
+    expect(contributor.text.join('\n')).toContain('not an Artificial Analysis measurement');
+    expect(contributor.text.join('\n')).toContain('inherited benchmark');
+    expect(subscriptionTrace(Plotly)).toBeUndefined();
     expect(lastCall(Plotly)[2].scene.xaxis.title).toMatchObject({
-      text: 'Cost per task, USD (log)',
+      text: 'Cost per task, USD (log; Contributor estimates)',
     });
-    expect(document.getElementById('counts').textContent).not.toContain('deal estimates');
+    expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
+    expect(document.getElementById('counts').textContent).not.toContain('subscription estimates');
     const terms = [...document.querySelectorAll('#model-tbody tr')].map(
       (tr) => tr.cells[5].textContent,
     );
-    expect(terms.length).toBe(3);
-    expect(new Set(terms)).toEqual(new Set(['Measured']));
+    // 3 measured rows plus the always-on Contributor repricing.
+    expect(terms).toHaveLength(4);
+    expect(new Set(terms)).toEqual(new Set(['Measured', 'Contributor est.']));
+    expect(terms).not.toContain('Go $60 quota-equiv est.');
   });
 
-  it('adds separately labeled estimates when toggled on, keeping max measured-only', async () => {
+  it('adds separately labeled subscription estimates when toggled on, keeping max measured-only', async () => {
     useDealsDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
@@ -420,25 +436,35 @@ describe('deals toggle', () => {
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(2));
 
     const data = lastCall(Plotly)[1];
-    const deals = dealsTrace(Plotly);
-    expect(deals).toBeDefined();
-    expect(deals.type).toBe('scatter3d');
-    expect(deals.marker.symbol).toBe('diamond');
-    // Contributor + compounded Go for 1.3 xhigh, Go $60 for GLM 5.3 Flash.
-    expect(deals.x).toHaveLength(3);
-    expect(deals.text.join('\n')).toContain('not an Artificial Analysis measurement');
-    expect(deals.text.join('\n')).toContain('inherited benchmark');
-    expect(deals.text.some((t) => t.includes('(max)'))).toBe(false);
+    const contributor = contributorTrace(Plotly);
+    const subscription = subscriptionTrace(Plotly);
+    expect(contributor).toBeDefined();
+    expect(subscription).toBeDefined();
+    expect(subscription.type).toBe('scatter3d');
+    expect(subscription.marker.symbol).toBe('diamond');
+    // Contributor trace stays at 1 direct point; subscription holds the
+    // compounded Contributor-via-Go plus Go $60 for GLM 5.3 Flash.
+    expect(contributor.x).toHaveLength(1);
+    expect(subscription.x).toHaveLength(2);
+    expect([...contributor.text, ...subscription.text].join('\n')).toContain(
+      'not an Artificial Analysis measurement',
+    );
+    expect([...contributor.text, ...subscription.text].join('\n')).toContain('inherited benchmark');
+    expect(subscription.text.some((t) => t.includes('(max)'))).toBe(false);
+    expect(contributor.text.some((t) => t.includes('(max)'))).toBe(false);
     // Measured traces keep their names; estimates never join them.
     expect(data.find((t) => t.name === 'Models')).toBeDefined();
-    expect(lastCall(Plotly)[2].scene.xaxis.title.text).toContain('quota-equiv');
-    expect(document.getElementById('counts').textContent).toContain('deal estimates');
+    expect(lastCall(Plotly)[2].scene.xaxis.title.text).toContain('Go subscription estimates');
+    expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
+    expect(document.getElementById('counts').textContent).toContain('subscription estimates');
 
     const bodyText = document.getElementById('model-tbody').textContent;
     expect(bodyText).toContain('Contributor est.');
     expect(bodyText).toContain('Go $60 quota-equiv est.');
+    expect(bodyText).toContain('compounded');
     expect(bodyText).toContain('Measured');
     expect(document.getElementById('deals-note').textContent).toContain('2026-09-24');
+    expect(document.getElementById('deals-note').textContent).toContain('always on');
   });
 
   it('halving quota use doubles the Go effective cost', async () => {    useDealsDom();
@@ -449,19 +475,24 @@ describe('deals toggle', () => {
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
-    const deals = dealsTrace(Plotly);
-    const idx = deals.text.findIndex((t) => t.includes('GLM 5.3 Flash'));
+    const subscription = subscriptionTrace(Plotly);
+    const idx = subscription.text.findIndex((t) => t.includes('GLM 5.3 Flash'));
     expect(idx).toBeGreaterThanOrEqual(0);
     // 0.25326 × 10 / (60 × 0.5) at half use.
-    expect(deals.x[idx]).toBeCloseTo(0.25326 / 3, 10);
+    expect(subscription.x[idx]).toBeCloseTo(0.25326 / 3, 10);
+    // Direct Contributor cost ignores quota use (distinct token tariff).
+    const contributor = contributorTrace(Plotly);
+    expect(contributor.x).toHaveLength(1);
   });
 
-  it('keeps deal rows in the table when re-sorting by header', async () => {
+  it('keeps Contributor rows always on and subscription rows after toggle through re-sorting', async () => {
     useDealsDom();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
+    // Contributor is already in the table before the subscription toggle.
+    expect(document.getElementById('model-tbody').textContent).toContain('Contributor est.');
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
@@ -751,7 +782,7 @@ describe('stable axis domains keep the grid fixed', () => {
     expect(lastPlot(Plotly)[2].scene.yaxis.range).toBeUndefined();
   });
 
-  it('keeps the grid fixed when the Deals toggle adds estimates', async () => {
+  it('keeps the grid fixed when the subscription toggle adds estimates', async () => {
     document.body.innerHTML = FIXTURE.replace(
       '<input id="frontier-only" type="checkbox" />',
       `<input id="frontier-only" type="checkbox" />
@@ -778,13 +809,17 @@ describe('stable axis domains keep the grid fixed', () => {
     await import('./main.js');
     await vi.waitFor(() => expect(Plotly.react).toHaveBeenCalledTimes(1));
 
-    // Deals off: the fixed cost range already contains the eligible estimates
-    // (Contributor ~$0.07, compounded Go ~$0.01) so enabling them cannot rescale.
+    // Subscription off: the fixed cost range already contains the always-on
+    // Contributor (~$0.07) plus eligible Go estimates (compounded Go ~$0.01)
+    // so enabling the toggle cannot rescale.
     const offRanges = ranges(Plotly);
     const offBox = boxOf(Plotly);
     expect(offRanges.x).toBeDefined();
     expectContains(offRanges.x, 0.0726);
     expectContains(offRanges.x, 1.367794);
+    // Contributor trace is already plotted while subscription waits.
+    expect(lastPlot(Plotly)[1].some((t) => t.name === 'Contributor (estimates)')).toBe(true);
+    expect(lastPlot(Plotly)[1].some((t) => t.name === 'Subscription estimates (Go only)')).toBe(false);
 
     document.getElementById('deals-toggle').checked = true;
     document.getElementById('deals-toggle').dispatchEvent(new Event('change', { bubbles: true }));
@@ -794,10 +829,12 @@ describe('stable axis domains keep the grid fixed', () => {
     expect(ranges(Plotly).y).toEqual(offRanges.y);
     expect(ranges(Plotly).z).toEqual(offRanges.z);
     expect(boxOf(Plotly).x).toEqual(offBox.x);
-    const deals = lastPlot(Plotly)[1].find((t) => t.name === 'Deals (estimates)');
-    expect(deals).toBeDefined();
-    for (const v of deals.x) expectContains(ranges(Plotly).x, v);
-    for (const v of deals.y) expectContains(ranges(Plotly).y, v);
+    const contributor = lastPlot(Plotly)[1].find((t) => t.name === 'Contributor (estimates)');
+    const subscription = lastPlot(Plotly)[1].find((t) => t.name === 'Subscription estimates (Go only)');
+    expect(contributor).toBeDefined();
+    expect(subscription).toBeDefined();
+    for (const v of [...contributor.x, ...subscription.x]) expectContains(ranges(Plotly).x, v);
+    for (const v of [...contributor.y, ...subscription.y]) expectContains(ranges(Plotly).y, v);
   });
 });
 

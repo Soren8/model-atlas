@@ -59,7 +59,7 @@
         </div>
 
         <div class="control-group">
-          <label><input type="checkbox" id="deals-toggle" /> Deals (estimates)</label>
+          <label><input type="checkbox" id="deals-toggle" /> Subscription estimates (Go only)</label>
           <label for="deals-util">Quota use, %</label>
           <input id="deals-util" type="number" min="1" max="100" step="1" value="100" />
           <p class="hint dim" id="deals-note"></p>
@@ -141,30 +141,36 @@
             Upstream data is governed by Artificial Analysis terms. See README for limits.
           </li>
           <li>
-            <strong>Deals (off by default)</strong> adds separately labeled
+            <strong>Contributor (always on)</strong> adds separately labeled
             estimate points next to the measured ones: Meta Muse Spark
             Contributor repricing for
-            <strong>Muse Spark 1.3 (xhigh)</strong> and 1.2 (xhigh) — Standard
+            <strong>Muse Spark 1.3 (xhigh)</strong> and 1.2 (xhigh) &mdash; Standard
             rates $0.15/$1.25/$4.25 perM vs Contributor $0.002/$0.10/$0.20
             (cached/input/output), blended at an assumed 7:2:1 mix
-            (.0414/.78, no per-task token counts published) — and OpenCode Go
-            quota-equivalent estimates ($10/mo over the notable $30/$60 tiers
+            (.0414/.78, no per-task token counts published). Estimates inherit
+            benchmark intelligence/speed (not provider-measured, never called
+            measured). Contributor pricing allows training use; Muse Spark (max) is
+            Standard-only and stays measured-only.
+          </li>
+          <li>
+            <strong>Subscription estimates (Go only, off by default)</strong>
+            adds Go quota-equiv estimates ($10/mo over the notable $30/$60 tiers
             at your quota-use %; rolling 5h 20% / weekly 50% / monthly 100%;
-            $15 omitted).
-            Estimates inherit benchmark intelligence/speed (not provider
-            measurements), assume benchmark cost meters at Go rates (never
+            $15 omitted), including compounded Contributor-via-Go for the Muse
+            Spark Contributor rows. Estimates inherit benchmark intelligence/speed
+            (not provider measurements), assume benchmark cost meters at Go rates (never
             exact parity), assume the full budget is spent on the modeled
             tier, and ignore peak/off-peak and context-tier price splits.
-            Contributor pricing allows training use; Muse Spark (max) is
-            Standard-only and stays measured-only. Curated by hand in
+            Curated by hand in
             <code>src/deals.js</code> from the
             <a href="https://dev.meta.ai/docs/pricing-rate-limits">Meta pricing/rate-limits</a>,
             <a href="https://dev.meta.ai/docs/reasoning">reasoning</a>,
             <a href="https://dev.meta.ai/docs/models">models</a> and
             <a href="https://opencode.ai/docs/go/">OpenCode Go</a> docs
-            (reviewed 2026-09-24; not auto-refreshed — re-check the sources;
+            (reviewed 2026-09-24; not auto-refreshed &mdash; re-check the sources;
             DeepSeek V4.1 Flash uses the active 4x promo quota until
-            2026-09-28 UTC, then disappears).
+            2026-09-28 UTC, then disappears). Other subscriptions were reviewed
+            2026-09-24 but are not plotted &mdash; see README.
           </li>
         </ul>
       </footer>

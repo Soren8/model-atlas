@@ -14,6 +14,11 @@ import {
   estimateGoCost,
   resolveGoTier,
   buildDealPoints,
+  buildContributorPoints,
+  buildSubscriptionPoints,
+  CONTRIBUTOR_TRACE_NAME,
+  SUBSCRIPTION_TRACE_NAME,
+  DEALS_TRACE_NAME,
   dealLabel,
   dealAssumption,
   parseUtilizationPercent,
@@ -817,7 +822,7 @@ describe('era chart domains keep the grid static', () => {
     expect(domains.zMax).toBe(50);
   });
 
-  it('includes eligible deal estimates in the domain even when the toggle is off', () => {
+  it('includes Contributor and eligible Go estimates in the domain even when the subscription toggle is off', () => {
     const rows = [
       measuredDealBase(),
       {
@@ -841,7 +846,7 @@ describe('era chart domains keep the grid static', () => {
     const cheapestDeal = Math.min(...deals.map((d) => d.cost));
 
     // The Contributor repricing (~$0.07) is cheaper than any measured cost
-    // and must widen the cost domain even though the Deals toggle is off.
+    // and must widen the cost domain even though the subscription toggle is off.
     expect(deals.length).toBeGreaterThan(0);
     expect(cheapestDeal).toBeLessThan(0.25326);
     expect(domains.xBounds[0]).toBeCloseTo(cheapestDeal, 10);
@@ -1031,5 +1036,114 @@ describe('resolveHoverAnchor', () => {
     expect(resolveHoverAnchor({ curveNumber: 0, pointNumber: 0 }, rect, { x: 300, y: 200 }))
       .toMatchObject({ x: 300, y: 200, source: 'cursor' });
     expect(resolveHoverAnchor({}, rect, null)).toBeNull();
+  });
+});
+
+describe('Contributor always-on split', () => {
+  function muse13xhigh(overrides = {}) {
+    return model({
+      id: 'muse-spark-1-3-xhigh',
+      name: 'Muse Spark 1.3 (xhigh)',
+      creator: 'Meta',
+      iq: 45.1,
+      cost: 1.367794,
+      time_sec: 227.56,
+      tps: 237.4,
+      ...overrides,
+    });
+  }
+
+  function glmFlash(overrides = {}) {
+    return model({
+      id: 'glm-5-3-flash',
+      name: 'GLM 5.3 Flash',
+      creator: 'Z AI',
+      iq: 41.8,
+      cost: 0.25326,
+      time_sec: 992.84,
+      tps: 50.9,
+      ...overrides,
+    });
+  }
+
+  it('labels Contributor and subscription traces separately, never as measured', () => {
+    expect(CONTRIBUTOR_TRACE_NAME).toMatch(/Contributor/i);
+    expect(CONTRIBUTOR_TRACE_NAME).toMatch(/estimat/i);
+    expect(SUBSCRIPTION_TRACE_NAME).toMatch(/Subscription/i);
+    expect(SUBSCRIPTION_TRACE_NAME).toMatch(/Go/i);
+    expect(CONTRIBUTOR_TRACE_NAME).not.toBe(SUBSCRIPTION_TRACE_NAME);
+    expect(CONTRIBUTOR_TRACE_NAME).not.toMatch(/measured/i);
+    expect(SUBSCRIPTION_TRACE_NAME).not.toMatch(/measured/i);
+    // Legacy alias still resolves to the subscription trace.
+    expect(DEALS_TRACE_NAME).toBe(SUBSCRIPTION_TRACE_NAME);
+  });
+
+  it('splits direct Contributor from subscription estimates without mutating rows', () => {
+    const rows = Object.freeze([Object.freeze(glmFlash()), Object.freeze(muse13xhigh())]);
+    const before = JSON.stringify(rows);
+
+    const contributor = buildContributorPoints(rows, { era: 1 });
+    const subscription = buildSubscriptionPoints(rows, { era: 1 });
+    const all = buildDealPoints(rows, { era: 1 });
+
+    expect(JSON.stringify(rows)).toBe(before);
+    expect(contributor.map((p) => p.deal.kind)).toEqual(['contributor']);
+    expect(contributor).toHaveLength(1);
+    expect(subscription.every((p) => p.deal.kind !== 'contributor')).toBe(true);
+    // 1.3 xhigh compounded Go plus GLM Go $60.
+    expect(subscription.map((p) => p.deal.kind).sort()).toEqual(['contributor-go', 'go']);
+    expect(contributor.length + subscription.length).toBe(all.length);
+    // Direct Contributor inherits benchmark iq/speed and reprices 7:2:1.
+    expect(contributor[0].iq).toBe(45.1);
+    expect(contributor[0].time_sec).toBe(227.56);
+    expect(contributor[0].cost).toBeCloseTo(1.367794 * 0.0414 / 0.78, 10);
+    expect(contributor[0].name).toContain('Contributor est.');
+    expect(contributor[0].name).not.toMatch(/measured/i);
+  });
+
+  it('keeps both 1.3 and 1.2 direct Contributor rows, never max', () => {
+    const rows = [
+      muse13xhigh(),
+      muse13xhigh({ id: 'muse-spark-1-2-xhigh', name: 'Muse Spark 1.2 (xhigh)', cost: 1.1 }),
+      muse13xhigh({ id: 'muse-spark-1-3-max', name: 'Muse Spark 1.3 (max)', cost: 1.6 }),
+    ];
+
+    const contributor = buildContributorPoints(rows, { era: 1 });
+
+    expect(contributor.map((p) => p.deal.goId).sort()).toEqual([
+      'muse-spark-1.2-contributor',
+      'muse-spark-1.3-contributor',
+    ]);
+  });
+
+  it('keeps Contributor and eligible Go in the stable domain together', () => {
+    const rows = [glmFlash(), muse13xhigh()];
+
+    const points = eraDomainPoints(rows, { era: 1, utilization: 1 });
+    const kinds = points.filter((p) => p.deal).map((p) => p.deal.kind);
+
+    expect(kinds).toContain('contributor');
+    expect(kinds).toContain('go');
+    expect(kinds).toContain('contributor-go');
+    const domains = eraChartDomains(rows, { era: 1, speedMode: 'time', utilization: 1 });
+    const cheapest = Math.min(...buildDealPoints(rows, { era: 1 }).map((d) => d.cost));
+    expect(domains.xBounds[0]).toBeCloseTo(cheapest, 10);
+  });
+
+  it('Contributor estimates respond to era/search/provider/retired filters like measured rows', () => {
+    const rows = [glmFlash(), muse13xhigh()];
+    const combined = rows.concat(buildDealPoints(rows, { era: 1 }));
+
+    expect(filterModels(combined, { era: 0, speedMode: 'time' }).some((m) => m.deal)).toBe(false);
+    expect(
+      filterModels(combined, { era: 1, speedMode: 'time', query: 'muse spark' }).some(
+        (m) => m.deal?.kind === 'contributor',
+      ),
+    ).toBe(true);
+    expect(
+      filterModels(combined, { era: 1, speedMode: 'time', providers: new Set(['Z AI']) }).every(
+        (m) => m.creator === 'Z AI',
+      ),
+    ).toBe(true);
   });
 });

@@ -1,12 +1,21 @@
 /**
- * Curated, source-reviewed "Deals" configuration.
+ * Curated, source-reviewed estimate configuration (Contributor + Go).
  *
  * This file is maintained by hand from the official provider docs listed
  * below — it is deliberately separate from the measured snapshot
  * (`public/data/models.json`) and is never rescraped automatically, because
  * neither Artificial Analysis nor the upstream llm-frontier feed publishes
- * these deal prices. Re-check the sources before trusting the estimates:
+ * these prices. Re-check the sources before trusting the estimates:
  * tiers, token prices and promos change.
+ *
+ * Display split (see lib.js `buildContributorPoints` /
+ * `buildSubscriptionPoints` and main.js `combinedModels`): direct
+ * Contributor repricings (`kind: 'contributor'`, distinct Meta token tariff)
+ * are always shown in their own trace; Go subscription estimates
+ * (`kind: 'go'` plus compounded `kind: 'contributor-go'`) join only when the
+ * "Subscription estimates (Go only)" toggle is on (off by default). Domains
+ * always contain Contributor plus eligible Go estimates so the toggle never
+ * rescales.
  *
  * Reviewed: 2026-09-24.
  * Refresh policy: re-review against the official sources below whenever the

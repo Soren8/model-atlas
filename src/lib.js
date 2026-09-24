@@ -141,12 +141,14 @@ export function logAxisRange(min, max, { padFraction = 0.05, singletonPad = 0.5 
 
 /**
  * Full era point set for stable axis domains: every measured row of the
- * selected era plus every eligible deal estimate for that era at the active
- * quota utilization. Filters (search, provider, open, retired, frontier)
- * never narrow this set — the grid stays fixed while the plotted subset
- * changes. Eras never mix. Deal estimates are always included, even when the
- * Deals toggle is off, so toggling estimates on/off does not rescale; only
- * economics (utilization, promo clock) legitimately move the bounds.
+ * selected era plus every eligible estimate for that era at the active
+ * quota utilization (always-on Contributor repricings plus eligible Go
+ * subscription estimates). Filters (search, provider, open, retired,
+ * frontier) never narrow this set — the grid stays fixed while the plotted
+ * subset changes. Eras never mix. Estimates are always included, even when
+ * the subscription toggle is off, so toggling subscription estimates on/off
+ * does not rescale; only economics (utilization, promo clock) legitimately
+ * move the bounds.
  */
 export function eraDomainPoints(models, { era = null, utilization = 1, now = Date.now() } = {}) {
   const measured = (models ?? []).filter((m) => era === null || m.era === era);
@@ -242,8 +244,18 @@ export function filterModels(models, opts = {}) {
   });
 }
 
-/** Trace name of the separately labeled deal-estimate points. */
-export const DEALS_TRACE_NAME = 'Deals (estimates)';
+/** Trace name of the always-on direct Contributor estimate points. */
+export const CONTRIBUTOR_TRACE_NAME = 'Contributor (estimates)';
+
+/** Trace name of the opt-in Go subscription estimate points. */
+export const SUBSCRIPTION_TRACE_NAME = 'Subscription estimates (Go only)';
+
+/**
+ * Legacy alias: subscription estimates were formerly grouped under a generic
+ * "Deals" trace. Kept so existing imports keep resolving to the subscription
+ * trace; new code should use SUBSCRIPTION_TRACE_NAME / CONTRIBUTOR_TRACE_NAME.
+ */
+export const DEALS_TRACE_NAME = SUBSCRIPTION_TRACE_NAME;
 
 /**
  * Contributor repricing ratio derived from the curated per-1M-token rates:
@@ -548,6 +560,28 @@ export function buildDealPoints(models, { era = null, utilization = 1, now = Dat
     // Unknown kinds are ignored so a config typo can never inject a point.
   }
   return points;
+}
+
+/**
+ * Direct Contributor repricings only (`kind: 'contributor'`). These use the
+ * distinct Meta token tariff (not a subscription quota formula) and are
+ * always shown alongside measured rows — never gated behind the subscription
+ * toggle, never mutating the upstream measured rows.
+ */
+export function buildContributorPoints(models, opts = {}) {
+  return buildDealPoints(models, opts).filter((p) => p.deal?.kind === 'contributor');
+}
+
+/**
+ * Subscription estimates only (`kind: 'go'` plus compounded
+ * `kind: 'contributor-go'`). Shown only when the subscription toggle is on;
+ * the cost axis/domain already contains them while off so enabling the toggle
+ * never rescales.
+ */
+export function buildSubscriptionPoints(models, opts = {}) {
+  return buildDealPoints(models, opts).filter(
+    (p) => p.deal && p.deal.kind !== 'contributor',
+  );
 }
 
 /** Sorted provider list with per-provider model counts. */
