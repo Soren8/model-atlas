@@ -50,7 +50,7 @@ readable by the unprivileged nginx process.
   `malakar2/model-atlas:latest` plus a commit tag to Docker Hub. Configure
   `DOCKERHUB_USERNAME=malakar2` and `DOCKERHUB_TOKEN` as Actions secrets in
   this repository before publishing. Refresh commits also trigger a new image
-  build; the [iac](../iac/webserver/model-atlas.md) repo deploys it.
+  build; the sibling `iac` repository deploys it.
 
 - **Data refresh** (`.github/workflows/refresh.yml`): runs every 6 hours and on
   manual dispatch. It fetches the upstream JSON instead of rescraping
