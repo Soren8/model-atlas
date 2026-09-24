@@ -11,9 +11,9 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.js'],
     // Nested subpath so main.test.js exercises data-URL resolution for
-    // project-page deployments (e.g. https://<user>.github.io/llm-chart/).
+    // project-page deployments (e.g. https://<user>.github.io/model-atlas/).
     environmentOptions: {
-      jsdom: { url: 'https://user.github.io/llm-chart/' },
+      jsdom: { url: 'https://user.github.io/model-atlas/' },
     },
   },
 });

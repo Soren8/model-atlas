@@ -38,7 +38,7 @@ class DataError(ValueError):
 
 def fetch_bytes(url: str, timeout: int = 60) -> bytes:
     req = urllib.request.Request(
-        url, headers={"User-Agent": "llm-chart-refresh/1.0"}
+        url, headers={"User-Agent": "model-atlas-refresh/1.0"}
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()

@@ -77,9 +77,9 @@ describe('main initialization', () => {
     await import('./main.js');
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    // jsdom url is https://user.github.io/llm-chart/ (see vite.config.js).
+    // jsdom url is https://user.github.io/model-atlas/ (see vite.config.js).
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://user.github.io/llm-chart/data/models.json',
+      'https://user.github.io/model-atlas/data/models.json',
     );
   });
 

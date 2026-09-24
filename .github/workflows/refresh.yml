@@ -29,8 +29,8 @@ jobs:
             echo "measurements unchanged, nothing to commit"
             exit 0
           fi
-          git config user.name "llm-chart-refresh"
-          git config user.email "llm-chart-refresh@users.noreply.github.com"
+          git config user.name "model-atlas-refresh"
+          git config user.email "model-atlas-refresh@users.noreply.github.com"
           git add public/data/models.json
           git commit -m "data: refresh model snapshot $(date -u +%F)"
           git push

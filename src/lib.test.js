@@ -73,14 +73,14 @@ function model(overrides = {}) {
 
 describe('resolveDataUrl', () => {
   it('resolves under a nested deployment subpath', () => {
-    expect(resolveDataUrl('https://user.github.io/llm-chart/')).toBe(
-      'https://user.github.io/llm-chart/data/models.json',
+    expect(resolveDataUrl('https://user.github.io/model-atlas/')).toBe(
+      'https://user.github.io/model-atlas/data/models.json',
     );
   });
 
   it('resolves relative to the containing page, not the page file', () => {
-    expect(resolveDataUrl('https://user.github.io/llm-chart/index.html')).toBe(
-      'https://user.github.io/llm-chart/data/models.json',
+    expect(resolveDataUrl('https://user.github.io/model-atlas/index.html')).toBe(
+      'https://user.github.io/model-atlas/data/models.json',
     );
   });
 
