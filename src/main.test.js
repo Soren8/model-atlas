@@ -1752,6 +1752,51 @@ describe('preferred-corner overlay outside the pick scene', () => {
     expect(resizedDivs).toContain(boxLayer());
   });
 
+  it('follows touch pan and rotation even when Plotly emits no camera events', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    const chart = document.getElementById('chart');
+    let liveCamera = { eye: { x: 1.7, y: -1.5, z: 0.9 } };
+    chart._fullLayout = { scene: { _scene: { getCamera: () => liveCamera } } };
+    await import('./main.js');
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBeGreaterThan(0));
+
+    chart.dispatchEvent(new Event('touchstart', { bubbles: true }));
+    liveCamera = {
+      eye: { x: -0.4, y: 0.8, z: 1.2 },
+      center: { x: 0.2, y: -0.3, z: 0.1 },
+      up: { x: 0, y: 0.3, z: 0.95 },
+      projection: { type: 'perspective' },
+    };
+    document.dispatchEvent(new Event('touchmove', { bubbles: true }));
+    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(
+      ([div, update]) => div === boxLayer() && JSON.stringify(update['scene.camera']) === JSON.stringify(liveCamera),
+    )).toBe(true));
+    document.dispatchEvent(new Event('touchend', { bubbles: true }));
+
+    document.getElementById('frontier-only').click();
+    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBeGreaterThan(1));
+    expect(mainCalls(Plotly).at(-1)[2].scene.camera).toEqual(liveCamera);
+  });
+
+  it('tracks live zoom changes between Plotly camera events', async () => {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    const chart = document.getElementById('chart');
+    let liveCamera = { eye: { x: 1.7, y: -1.5, z: 0.9 } };
+    chart._fullLayout = { scene: { _scene: { getCamera: () => liveCamera } } };
+    await import('./main.js');
+    await vi.waitFor(() => expect(boxCalls(Plotly).length).toBeGreaterThan(0));
+
+    chart.dispatchEvent(new Event('wheel', { bubbles: true }));
+    liveCamera = { eye: { x: 0.8, y: -0.7, z: 0.4 } };
+    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(
+      ([div, update]) => div === boxLayer() && JSON.stringify(update['scene.camera']) === JSON.stringify(liveCamera),
+    )).toBe(true));
+    liveCamera = { eye: { x: 0.5, y: -0.4, z: 0.25 } };
+    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(
+      ([div, update]) => div === boxLayer() && JSON.stringify(update['scene.camera']) === JSON.stringify(liveCamera),
+    )).toBe(true));
+  });
+
   it('reapplies the latest camera when a drag lands mid-react without loops', async () => {
     const handlers = {};
     document.getElementById('chart').on = (name, fn) => { handlers[name] = fn; };

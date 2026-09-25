@@ -156,10 +156,44 @@ const state = {
 // so it can never enter the main pick scene or block dot hover. Both layers
 // share the exact camera, axis ranges, margins and cube aspect, synced via
 // the stored camera (drag/zoom/pan/reset) and every render
-// (search/deals/empty/resize). Only public Plotly newPlot/react/relayout/
-// resize are used; no private pick-buffer patching.
+// (search/deals/empty/resize). Touch and animated wheel gestures also read
+// the live scene camera; no private pick-buffer patching.
 let boxLayerDiv = null;
 let boxRaf = 0;
+let touchTracking = false;
+let wheelFrames = 0;
+let lastBoxCamera = null;
+
+function liveSceneCamera() {
+  // gl3d emits relayouting on mousemove and relayout on mouseup, but neither
+  // on touch movement/end; wheel animation can also continue after its event.
+  // Read the live camera only while tracking those gestures.
+  try {
+    return els.chart._fullLayout?.scene?._scene?.getCamera() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function wireLiveCamera() {
+  els.chart.addEventListener('touchstart', () => {
+    touchTracking = true;
+    scheduleBoxCameraSync();
+  });
+  document.addEventListener('touchend', () => {
+    if (!touchTracking) return;
+    touchTracking = false;
+    wheelFrames = Math.max(wheelFrames, 2);
+    scheduleBoxCameraSync();
+  });
+  document.addEventListener('touchcancel', () => {
+    touchTracking = false;
+  });
+  els.chart.addEventListener('wheel', () => {
+    wheelFrames = 20;
+    scheduleBoxCameraSync();
+  });
+}
 
 function chartWrap() {
   if (els.chart.parentElement?.dataset?.chartWrap === '1') return els.chart.parentElement;
@@ -389,8 +423,10 @@ async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, c
   const boxConfig = { responsive: true, displaylogo: false, displayModeBar: false };
   try {
     await Plotly.react(boxDiv, data, boxLayout(zMax, xRange, yRange, cameraSnapshot, logScale), boxConfig);
+    lastBoxCamera = cloneCamera(cameraSnapshot);
     boxDiv.style.display = '';
     hardenBoxLayer(boxDiv);
+    if (touchTracking || wheelFrames) scheduleBoxCameraSync();
   } catch {
     // Overlay failure (e.g. no WebGL) must never disable primary hover:
     // hide the layer and keep the main scatter interactive.
@@ -403,10 +439,18 @@ async function renderBoxOverlay(domainPoints, speedMode, zMax, xRange, yRange, c
 function syncBoxCameraNow() {
   boxRaf = 0;
   if (!state.webgl || !boxLayerDiv?.isConnected) return;
+  const live = (touchTracking || wheelFrames) ? liveSceneCamera() : null;
+  if (live) storedCamera = cloneCamera(live);
+  const camera = cameraForLayout();
   try {
-    const p = Plotly.relayout(boxLayerDiv, { 'scene.camera': cameraForLayout() });
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+    if (!camerasEqual(lastBoxCamera, camera)) {
+      lastBoxCamera = cloneCamera(camera);
+      const p = Plotly.relayout(boxLayerDiv, { 'scene.camera': camera });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }
   } catch {}
+  if (wheelFrames) wheelFrames -= 1;
+  if (live && (touchTracking || wheelFrames)) scheduleBoxCameraSync();
 }
 
 function scheduleBoxCameraSync() {
@@ -1184,6 +1228,7 @@ async function init() {
       ensureHoverTooltip();
     } catch {}
     wireCamera();
+    wireLiveCamera();
   } catch {
     state.webgl = false;
     els.chart.style.display = 'none';

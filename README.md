@@ -103,8 +103,9 @@ readable by the unprivileged nginx process.
   `pointer-events: none` (no axes/grids/labels/modebar); the main plot holds
   scatter points only, so the box can never occlude picks and dots always
   hover. Both layers share the same camera, ranges, margins and cube aspect,
-  synced on rotate/pan/zoom, reset, filtering, empty states and resize via
-  public react/relayout/resize only — no private pick patching.
+  synced on rotate/pan/zoom, reset, filtering, empty states and resize. Touch
+  and animated wheel gestures read Plotly's live gl3d camera because Plotly
+  does not emit touch camera events; the box stays outside the pick scene.
 - Zooming into the scene moves axis names to visible chart corners; reset
   restores Plotly's axis titles.
 - The intelligence axis tops out at the highest score in the selected era, holding steady across search, provider, and frontier filters.
