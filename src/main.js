@@ -163,6 +163,113 @@ let boxRaf = 0;
 let touchTracking = false;
 let wheelFrames = 0;
 let lastBoxCamera = null;
+let twoTouch = null;
+let suppressTouch = false;
+let gestureRaf = 0;
+let gestureCamera = null;
+
+function touchPoints(event) {
+  if (event.touches?.length !== 2) return null;
+  const [a, b] = event.touches;
+  return {
+    x: (a.clientX + b.clientX) / 2,
+    y: (a.clientY + b.clientY) / 2,
+    distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+  };
+}
+
+function twoTouchCamera(gesture, points) {
+  const { camera, start, height } = gesture;
+  const eyeVector = ['x', 'y', 'z'].map((axis) => camera.eye[axis] - camera.center[axis]);
+  const radius = Math.hypot(...eyeVector);
+  const forward = eyeVector.map((value) => -value / radius);
+  const up = ['x', 'y', 'z'].map((axis) => camera.up[axis]);
+  const right = [
+    forward[1] * up[2] - forward[2] * up[1],
+    forward[2] * up[0] - forward[0] * up[2],
+    forward[0] * up[1] - forward[1] * up[0],
+  ];
+  const rightLength = Math.hypot(...right);
+  if (!rightLength) return camera;
+  const normalizedRight = right.map((value) => value / rightLength);
+  const screenUp = [
+    normalizedRight[1] * forward[2] - normalizedRight[2] * forward[1],
+    normalizedRight[2] * forward[0] - normalizedRight[0] * forward[2],
+    normalizedRight[0] * forward[1] - normalizedRight[1] * forward[0],
+  ];
+  const dx = (points.x - start.x) * radius / height * 2;
+  const dy = (points.y - start.y) * radius / height * 2;
+  const zoom = Math.max(0.01 / radius, Math.min(100 / radius, start.distance / points.distance));
+  const result = cloneCamera(camera);
+  for (const [index, axis] of ['x', 'y', 'z'].entries()) {
+    const pan = -normalizedRight[index] * dx + screenUp[index] * dy;
+    result.center[axis] += pan;
+    result.eye[axis] = result.center[axis] + eyeVector[index] * zoom;
+  }
+  return result;
+}
+
+function flushGestureCamera() {
+  gestureRaf = 0;
+  if (!state.webgl || !gestureCamera) return;
+  const camera = gestureCamera;
+  gestureCamera = null;
+  storedCamera = cloneCamera(camera);
+  try {
+    const p = Plotly.relayout(els.chart, { 'scene.camera': camera });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch {}
+  if (boxLayerDiv?.isConnected) {
+    lastBoxCamera = cloneCamera(camera);
+    try {
+      const p = Plotly.relayout(boxLayerDiv, { 'scene.camera': cloneCamera(camera) });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
+  }
+}
+
+function wireTwoTouch() {
+  els.chart.addEventListener('touchstart', (event) => {
+    const points = touchPoints(event);
+    if (!points) return;
+    event.preventDefault();
+    event.stopPropagation();
+    touchTracking = false;
+    wheelFrames = 0;
+    suppressTouch = true;
+    const camera = cloneCamera(liveSceneCamera() ?? cameraForLayout());
+    if (!camera.center) camera.center = { x: 0, y: 0, z: 0 };
+    if (!camera.up) camera.up = { x: 0, y: 0, z: 1 };
+    twoTouch = {
+      camera,
+      start: points,
+      height: els.chart.getBoundingClientRect().height || els.chart.clientHeight || 1,
+    };
+  }, { capture: true, passive: false });
+  document.addEventListener('touchmove', (event) => {
+    if (!suppressTouch) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const points = touchPoints(event);
+    if (!twoTouch || !points || !points.distance) return;
+    gestureCamera = twoTouchCamera(twoTouch, points);
+    if (!gestureRaf) gestureRaf = window.requestAnimationFrame(flushGestureCamera);
+  }, { capture: true, passive: false });
+  const end = (event) => {
+    if (!suppressTouch) return;
+    event.preventDefault();
+    event.stopPropagation();
+    twoTouch = null;
+    if (!event.touches?.length) {
+      suppressTouch = false;
+      if (gestureRaf) window.cancelAnimationFrame(gestureRaf);
+      if (gestureCamera) flushGestureCamera();
+      syncZoomAxisLabels();
+    }
+  };
+  document.addEventListener('touchend', end, { capture: true, passive: false });
+  document.addEventListener('touchcancel', end, { capture: true, passive: false });
+}
 
 function liveSceneCamera() {
   // gl3d emits relayouting on mousemove and relayout on mouseup, but neither
@@ -1229,6 +1336,7 @@ async function init() {
     } catch {}
     wireCamera();
     wireLiveCamera();
+    wireTwoTouch();
   } catch {
     state.webgl = false;
     els.chart.style.display = 'none';

@@ -1860,6 +1860,83 @@ describe('preferred-corner overlay outside the pick scene', () => {
   });
 });
 
+describe('mobile chart gestures', () => {
+  const startCamera = {
+    eye: { x: 1.7, y: -1.5, z: 0.9 },
+    center: { x: 0, y: 0, z: 0 },
+    up: { x: 0, y: 0, z: 1 },
+    projection: { type: 'perspective' },
+  };
+
+  function touch(type, target, points) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'touches', {
+      value: points.map(([clientX, clientY], identifier) => ({ clientX, clientY, identifier })),
+    });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  async function setup() {
+    const Plotly = (await import('plotly.js-gl3d-dist')).default;
+    const chart = document.getElementById('chart');
+    chart._fullLayout = { scene: { _scene: { getCamera: () => startCamera } } };
+    chart.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 500 });
+    await import('./main.js');
+    await vi.waitFor(() => expect(Plotly.react.mock.calls.some(([div]) => div?.id === 'chart-box')).toBe(true));
+    const canvas = document.createElement('canvas');
+    chart.appendChild(canvas);
+    return { Plotly, chart, canvas, box: document.getElementById('chart-box') };
+  }
+
+  it('pans both scenes together when two fingers drag without rotating', async () => {
+    const { Plotly, chart, canvas, box } = await setup();
+    const nativeTouch = vi.fn();
+    canvas.addEventListener('touchmove', nativeTouch);
+    touch('touchstart', canvas, [[100, 100], [200, 100]]);
+    const move = touch('touchmove', canvas, [[140, 120], [240, 120]]);
+    expect(move.defaultPrevented).toBe(true);
+    expect(nativeTouch).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(([div]) => div === chart)).toBe(true));
+    const main = Plotly.relayout.mock.calls.filter(([div]) => div === chart).at(-1)[1]['scene.camera'];
+    const overlay = Plotly.relayout.mock.calls.filter(([div]) => div === box).at(-1)[1]['scene.camera'];
+    expect(main.center).not.toEqual(startCamera.center);
+    expect(main.eye.x - startCamera.eye.x).toBeCloseTo(main.center.x, 8);
+    expect(main.eye.y - startCamera.eye.y).toBeCloseTo(main.center.y, 8);
+    expect(main.eye.z - startCamera.eye.z).toBeCloseTo(main.center.z, 8);
+    expect(main.up).toEqual(startCamera.up);
+    expect(overlay).toEqual(main);
+    touch('touchend', canvas, []);
+  });
+
+  it('pinches to zoom both scenes, then returns to native one-finger rotation', async () => {
+    const { Plotly, chart, canvas, box } = await setup();
+    const nativeTouch = vi.fn();
+    canvas.addEventListener('touchstart', nativeTouch);
+    touch('touchstart', canvas, [[100, 100], [200, 100]]);
+    expect(nativeTouch).not.toHaveBeenCalled();
+    touch('touchmove', canvas, [[75, 100], [225, 100]]);
+    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(([div]) => div === chart)).toBe(true));
+    const main = Plotly.relayout.mock.calls.filter(([div]) => div === chart).at(-1)[1]['scene.camera'];
+    const overlay = Plotly.relayout.mock.calls.filter(([div]) => div === box).at(-1)[1]['scene.camera'];
+    expect(Math.hypot(main.eye.x, main.eye.y, main.eye.z)).toBeLessThan(
+      Math.hypot(startCamera.eye.x, startCamera.eye.y, startCamera.eye.z),
+    );
+    expect(main.center).toEqual(startCamera.center);
+    expect(overlay).toEqual(main);
+    touch('touchend', canvas, []);
+    touch('touchstart', canvas, [[100, 100]]);
+    expect(nativeTouch).toHaveBeenCalledTimes(1);
+    touch('touchend', canvas, []);
+    document.getElementById('frontier-only').click();
+    await vi.waitFor(() => expect(Plotly.react.mock.calls.filter(([div]) => div === chart).length).toBe(2));
+    expect(Plotly.react.mock.calls.filter(([div]) => div === chart).at(-1)[2].scene.camera).toEqual(main);
+    document.getElementById('reset-camera').click();
+    expect(Plotly.relayout.mock.calls.filter(([div]) => div === chart).at(-1)[1]['scene.camera'].eye)
+      .toEqual(startCamera.eye);
+  });
+});
+
 describe('overlay pointer isolation and geometry', () => {
   // Follow-up hardening: parent pointer-events:none alone loses when a
   // Plotly child sets pointer-events:auto. The guard must cascade with
