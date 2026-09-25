@@ -90,7 +90,7 @@ readable by the unprivileged nginx process.
   scale switches (new units) and era switches legitimately recompute. Log ranges use log10 with endpoint padding and
   singleton expansion so all plottable points (including frontier extremes)
   sit inside; linear ranges run zero through the padded max; eras with no speed measurements leave speed to autorange.
-- The **Log scale** checkbox (checked by default) switches cost and the
+- The **Log scale** checkbox (off by default) switches cost and the
   active speed axis between log and linear together; intelligence is always
   linear. Axis titles name the active scale.
 - The green “Preferred corner” box marks the cheaper/faster/smarter octant of

@@ -167,9 +167,9 @@ describe('preferred corner trace', () => {
       flatshading: true,
     });
     expect(Math.min(...corner.x)).toBe(0.5);
-    expect(Math.max(...corner.x)).toBeCloseTo(1, 10);
+    expect(Math.max(...corner.x)).toBeCloseTo(1.25, 10);
     expect(Math.min(...corner.y)).toBe(5);
-    expect(Math.max(...corner.y)).toBeCloseTo(Math.sqrt(50), 10);
+    expect(Math.max(...corner.y)).toBeCloseTo(7.5, 10);
     expect(Math.min(...corner.z)).toBe(45);
     expect(Math.max(...corner.z)).toBe(50);
   });
@@ -419,7 +419,7 @@ describe('subscription toggle (Contributor always on)', () => {
     expect(offerTrace(Plotly, 'ChatGPT Pro/Codex $200 ~70x est.')).toBeUndefined();
     expect(offerTrace(Plotly, 'Cursor Ultra $200 ~2x est.')).toBeUndefined();
     expect(lastCall(Plotly)[2].scene.xaxis.title).toMatchObject({
-      text: 'Cost per task, USD (log; Contributor estimates)',
+      text: 'Cost per task, USD (linear; Contributor estimates)',
     });
     expect(document.getElementById('counts').textContent).toContain('Contributor estimates');
     expect(document.getElementById('counts').textContent).not.toContain('subscription estimates');
@@ -625,8 +625,8 @@ describe('axis titles use the Plotly object form', () => {
 
     const { x, y, z } = titles(Plotly);
 
-    expect(x).toMatchObject({ text: expect.stringMatching(/cost.*USD.*log/i) });
-    expect(y).toMatchObject({ text: expect.stringMatching(/time.*s.*log.*lower/i) });
+    expect(x).toMatchObject({ text: expect.stringMatching(/cost.*USD.*linear/i) });
+    expect(y).toMatchObject({ text: expect.stringMatching(/time.*s.*linear.*lower/i) });
     expect(z).toMatchObject({ text: expect.stringMatching(/intelligence/i) });
   });
 
@@ -695,8 +695,8 @@ describe('stable axis domains keep the grid fixed', () => {
   }
 
   function expectContains(range, value) {
-    expect(Math.log10(value)).toBeGreaterThanOrEqual(range[0] - 1e-9);
-    expect(Math.log10(value)).toBeLessThanOrEqual(range[1] + 1e-9);
+    expect(value).toBeGreaterThanOrEqual(range[0] - 1e-9);
+    expect(value).toBeLessThanOrEqual(range[1] + 1e-9);
   }
 
   it('keeps x/y ranges and the green box fixed across search, provider and frontier filters', async () => {
@@ -2040,7 +2040,7 @@ describe('exclude $200+ tiers', () => {
     };
     const beforeBox = boxCalls(Plotly).at(-1)[1].find((t) => t.name === 'Preferred corner');
     // Domain already contains hidden $200 estimates, so the grid covers them.
-    expect(Math.log10(1.4 / 70)).toBeGreaterThanOrEqual(beforeRanges.x[0] - 1e-9);
+    expect(1.4 / 70).toBeGreaterThanOrEqual(beforeRanges.x[0] - 1e-9);
 
     document.getElementById('deals-exclude-high').checked = false;
     document.getElementById('deals-exclude-high').dispatchEvent(new Event('change', { bubbles: true }));
@@ -2194,7 +2194,7 @@ describe('log scale toggle', () => {
   const LOG_FIXTURE = FIXTURE.replace(
     '<input id="hide-retired" type="checkbox" checked />',
     `<input id="hide-retired" type="checkbox" checked />
-<input id="log-scale" type="checkbox" checked />`,
+<input id="log-scale" type="checkbox" />`,
   );
 
   function mainCalls(Plotly) {
@@ -2207,52 +2207,50 @@ describe('log scale toggle', () => {
     return Plotly.react.mock.calls.filter((c) => c[0] === box);
   }
 
-  it('uses log axes by default with matching overlay ranges', async () => {
+  it('uses linear axes by default with matching overlay ranges', async () => {
     document.body.innerHTML = LOG_FIXTURE;
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
     await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
-    expect(document.getElementById('log-scale').checked).toBe(true);
+    expect(document.getElementById('log-scale').checked).toBe(false);
     const layout = mainCalls(Plotly).at(-1)[2];
-    expect(layout.scene.xaxis.type).toBe('log');
-    expect(layout.scene.yaxis.type).toBe('log');
-    expect(layout.scene.xaxis.title.text).toMatch(/log/i);
-    expect(layout.scene.yaxis.title.text).toMatch(/log/i);
+    expect(layout.scene.xaxis.type).toBe('linear');
+    expect(layout.scene.yaxis.type).toBe('linear');
+    expect(layout.scene.xaxis.title.text).toMatch(/linear/i);
+    expect(layout.scene.yaxis.title.text).toMatch(/linear/i);
     await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(1));
     const boxLayout = boxCalls(Plotly).at(-1)[2];
-    expect(boxLayout.scene.xaxis.type).toBe('log');
-    expect(boxLayout.scene.yaxis.type).toBe('log');
+    expect(boxLayout.scene.xaxis.type).toBe('linear');
+    expect(boxLayout.scene.yaxis.type).toBe('linear');
     expect(boxLayout.scene.xaxis.range).toEqual(layout.scene.xaxis.range);
     expect(boxLayout.scene.yaxis.range).toEqual(layout.scene.yaxis.range);
   });
 
-  it('switches cost and speed to linear zero-based axes with linear words', async () => {
+  it('switches cost and speed to log axes when enabled', async () => {
     document.body.innerHTML = LOG_FIXTURE;
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
 
     await import('./main.js');
     await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
 
-    document.getElementById('log-scale').checked = false;
+    document.getElementById('log-scale').checked = true;
     document.getElementById('log-scale').dispatchEvent(new Event('change', { bubbles: true }));
     await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
 
     const layout = mainCalls(Plotly).at(-1)[2];
-    expect(layout.scene.xaxis.type).toBe('linear');
-    expect(layout.scene.yaxis.type).toBe('linear');
+    expect(layout.scene.xaxis.type).toBe('log');
+    expect(layout.scene.yaxis.type).toBe('log');
     expect(layout.scene.zaxis.type ?? 'linear').toBe('linear');
-    expect(layout.scene.xaxis.title.text).toMatch(/linear/i);
-    expect(layout.scene.xaxis.title.text).not.toMatch(/log/i);
-    expect(layout.scene.yaxis.title.text).toMatch(/linear/i);
-    expect(layout.scene.xaxis.range[0]).toBe(0);
-    expect(layout.scene.xaxis.range[1]).toBeGreaterThan(2);
-    expect(layout.scene.yaxis.range[0]).toBe(0);
+    expect(layout.scene.xaxis.title.text).toMatch(/log/i);
+    expect(layout.scene.yaxis.title.text).toMatch(/log/i);
+    expect(layout.scene.xaxis.range[0]).toBeLessThan(Math.log10(0.5));
+    expect(layout.scene.xaxis.range[1]).toBeGreaterThan(Math.log10(2));
     await vi.waitFor(() => expect(boxCalls(Plotly).length).toBe(2));
     const boxLayout = boxCalls(Plotly).at(-1)[2];
-    expect(boxLayout.scene.xaxis.type).toBe('linear');
-    expect(boxLayout.scene.yaxis.type).toBe('linear');
+    expect(boxLayout.scene.xaxis.type).toBe('log');
+    expect(boxLayout.scene.yaxis.type).toBe('log');
     expect(boxLayout.scene.xaxis.range).toEqual(layout.scene.xaxis.range);
     expect(boxLayout.scene.yaxis.range).toEqual(layout.scene.yaxis.range);
     expect(boxLayout.scene.aspectmode).toBe(layout.scene.aspectmode);
@@ -2280,7 +2278,7 @@ describe('log scale toggle', () => {
     };
     handlers['plotly_relayout']({ 'scene.camera': JSON.parse(JSON.stringify(userCam)) });
 
-    document.getElementById('log-scale').checked = false;
+    document.getElementById('log-scale').checked = true;
     document.getElementById('log-scale').dispatchEvent(new Event('change', { bubbles: true }));
     await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
     expect(mainCalls(Plotly).at(-1)[2].scene.camera).toEqual(userCam);

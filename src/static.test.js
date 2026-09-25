@@ -42,10 +42,12 @@ describe('site chrome', () => {
     expect(html).toMatch(/Go \$30\/\$60/);
   });
 
-  it('exposes the default-checked Log scale toggle with accurate axis copy', () => {
+  it('exposes the default-off Log scale toggle with accurate axis copy', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf-8');
 
-    expect(html).toMatch(/id=["']log-scale["'][^>]*checked|checked[^>]*id=["']log-scale["']/);
+    const toggle = html.match(/<input\b[^>]*id=["']log-scale["'][^>]*>/)?.[0];
+    expect(toggle).toBeDefined();
+    expect(toggle).not.toMatch(/\bchecked\b/);
     expect(html).toMatch(/Log scale/);
     // Hint and methodology name the toggle and keep intelligence linear.
     expect(html).toMatch(/Log scale\s*toggle/);

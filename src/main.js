@@ -139,9 +139,9 @@ const state = {
   openOnly: false,
   includeRetired: false,
   frontierOnly: false,
-  // Log scale (on by default): cost and the active speed axis switch
+  // Cost and the active speed axis switch
   // between log and linear together; intelligence is always linear.
-  logScale: true,
+  logScale: false,
   // Subscription toggle only: direct Contributor estimates are always on.
   dealsEnabled: false,
   // High-tier exclusion: checked by default, filters $200+/mo subscription
@@ -1155,7 +1155,7 @@ async function init() {
   state.includeRetired = !els.hideRetired.checked;
   state.dealsEnabled = els.dealsToggle?.checked ?? false;
   state.excludeHighTiers = els.dealsExcludeHigh?.checked ?? false;
-  state.logScale = els.logScale?.checked ?? true;
+  state.logScale = els.logScale?.checked ?? false;
   state.utilization = parseUtilizationPercent(els.dealsUtil?.value ?? '100');
   if (els.dealsNote) {
     els.dealsNote.textContent =
