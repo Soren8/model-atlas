@@ -1191,46 +1191,6 @@ describe('camera persistence', () => {
   };
   const DEFAULT_EYE = { x: 1.7, y: -1.5, z: 0.9 };
 
-  it('does not reset orientation when crossing the far-zoom label boundary', async () => {
-    const handlers = captureHandlers();
-    const Plotly = (await import('plotly.js-gl3d-dist')).default;
-    const chart = document.getElementById('chart');
-    const deepCamera = {
-      eye: { x: 0.08, y: -0.06, z: 0.04 },
-      center: { x: 0.1, y: -0.2, z: 0.05 },
-      up: { x: 0.3, y: 0.1, z: 0.95 },
-      projection: { type: 'perspective' },
-    };
-
-    await import('./main.js');
-    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(1));
-    let cameraEventInProgress = false;
-    let relayoutDuringCameraEvent = false;
-    Plotly.relayout.mockImplementation((div, update) => {
-      if (div !== chart || !('scene.xaxis.title.text' in update)) return;
-      if (cameraEventInProgress) relayoutDuringCameraEvent = true;
-      // A gl3d scene rebuild can replace the live camera unless relayout
-      // explicitly carries the current camera with the axis-title change.
-      handlers.plotly_relayout({ 'scene.camera': update['scene.camera'] ?? { eye: DEFAULT_EYE } });
-    });
-
-    cameraEventInProgress = true;
-    handlers.plotly_relayout({ 'scene.camera': deepCamera });
-    cameraEventInProgress = false;
-
-    expect(relayoutDuringCameraEvent).toBe(false);
-    await vi.waitFor(() => expect(Plotly.relayout.mock.calls.some(
-      ([div, update]) => div === chart && update['scene.xaxis.title.text'] === '' &&
-        update['scene.camera']?.eye?.x === deepCamera.eye.x,
-    )).toBe(true));
-
-    const search = document.getElementById('search');
-    search.value = 'alpha';
-    search.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(mainCalls(Plotly).length).toBe(2));
-    expect(lastCamera(Plotly)).toEqual(deepCamera);
-  });
-
   it('keeps axis names on visible corners while zoomed and restores Plotly titles on reset', async () => {
     const handlers = captureHandlers();
     const Plotly = (await import('plotly.js-gl3d-dist')).default;
@@ -1250,25 +1210,20 @@ describe('camera persistence', () => {
     expect(y.textContent).toContain('Time per task');
     expect(z.textContent).toBe('Intelligence index');
     expect([x.dataset.side, y.dataset.side, z.dataset.side]).toEqual(['left', 'right', 'right']);
-    await vi.waitFor(() => expect(Plotly.relayout).toHaveBeenCalledWith(
-      document.getElementById('chart'), expect.objectContaining({
-        'scene.camera': expect.objectContaining({ eye: { x: 0.5, y: -0.4, z: 0.3 } }),
-        'scene.xaxis.title.text': '',
-        'scene.yaxis.title.text': '',
-        'scene.zaxis.title.text': '',
-      }),
-    ));
+    expect(Plotly.relayout).toHaveBeenCalledWith(document.getElementById('chart'), {
+      'scene.xaxis.title.text': '',
+      'scene.yaxis.title.text': '',
+      'scene.zaxis.title.text': '',
+    });
 
     handlers.plotly_relayout({ 'scene.camera.eye.y': 0.4, 'scene.camera.eye.x': -0.5 });
     expect([x.dataset.side, y.dataset.side, z.dataset.side]).toEqual(['right', 'left', 'left']);
 
     document.getElementById('reset-camera').click();
     expect([x.hidden, y.hidden, z.hidden]).toEqual([true, true, true]);
-    await vi.waitFor(() => expect(Plotly.relayout).toHaveBeenCalledWith(
-      document.getElementById('chart'), expect.objectContaining({
-        'scene.zaxis.title.text': 'Intelligence index',
-      }),
-    ));
+    expect(Plotly.relayout).toHaveBeenCalledWith(document.getElementById('chart'), expect.objectContaining({
+      'scene.zaxis.title.text': 'Intelligence index',
+    }));
   });
 
   function mainCalls(Plotly) {

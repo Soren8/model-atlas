@@ -43,7 +43,6 @@ const DEFAULT_CAMERA = { eye: { x: 1.7, y: -1.5, z: 0.9 } };
 let storedCamera = null;
 let cameraWired = false;
 let renderSeq = 0;
-let axisTitleTimer = 0;
 
 function cloneCamera(cam) {
   return cam ? JSON.parse(JSON.stringify(cam)) : cam;
@@ -223,24 +222,16 @@ function syncZoomAxisLabels(relayout = true) {
     if (axis === 'z') label.dataset.side = camera.eye.x < 0 ? 'left' : 'right';
   }
   wrap.dataset.zoomAxisLabels = zoomed ? '1' : '0';
-  if (!relayout || (zoomed === wasZoomed && !axisTitleTimer)) return;
-  if (axisTitleTimer) window.clearTimeout(axisTitleTimer);
-  axisTitleTimer = window.setTimeout(() => {
-    axisTitleTimer = 0;
-    if (!state.webgl || !wrap.isConnected) return;
-    const latestCamera = cameraForLayout();
-    const latestTitles = axisTitles();
-    const stillZoomed = zoomedIntoScene(latestCamera);
+  if (relayout && zoomed !== wasZoomed) {
     try {
       const p = Plotly.relayout(els.chart, {
-        'scene.camera': latestCamera,
-        'scene.xaxis.title.text': stillZoomed ? '' : latestTitles.x,
-        'scene.yaxis.title.text': stillZoomed ? '' : latestTitles.y,
-        'scene.zaxis.title.text': stillZoomed ? '' : latestTitles.z,
+        'scene.xaxis.title.text': zoomed ? '' : titles.x,
+        'scene.yaxis.title.text': zoomed ? '' : titles.y,
+        'scene.zaxis.title.text': zoomed ? '' : titles.z,
       });
       if (p && typeof p.catch === 'function') p.catch(() => {});
     } catch {}
-  }, 120);
+  }
 }
 
 function ensureBoxLayer() {
