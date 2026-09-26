@@ -60,7 +60,7 @@ readable by the unprivileged nginx process.
   Actions repository secret in `model-atlas`. If either credential or the App
   installation is missing, dispatch fails rather than being silently skipped.
 
-- **Data refresh** (`.github/workflows/refresh.yml`): runs every 6 hours and on
+- **Data refresh** (`.github/workflows/refresh.yml`): runs once daily and on
   manual dispatch. It fetches the upstream JSON instead of rescraping
   Artificial Analysis, validates the schema (positive costs, known era range,
   well-formed rows), normalizes into `public/data/models.json` with an atomic

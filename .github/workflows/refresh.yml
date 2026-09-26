@@ -7,7 +7,7 @@ name: Refresh model data
 
 on:
   schedule:
-    - cron: '17 */6 * * *' # every 6 hours
+    - cron: '17 5 * * *' # once daily
   workflow_dispatch:
 
 permissions:
