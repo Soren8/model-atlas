@@ -5,8 +5,11 @@ speed (y, log) and intelligence (z), with a highlighted 3D Pareto frontier.
 Inspired by <https://llm-frontier.catalystneuro.com/>.
 
 Stack: Vite + vanilla JS + Plotly `gl3d` (`plotly.js-gl3d-dist` npm package).
-Data: `public/data/models.json`, normalized from the upstream llm-frontier JSON
-by `scripts/refresh.py` (Python standard library only).
+Data: `public/data/models.json` (served "latest" copy), normalized from the
+upstream llm-frontier JSON by `scripts/refresh.py` (Python standard library
+only). Each update also writes a dated `public/data/models-YYYY-MM-DD.json`
+history file (one per UTC day; a same-day re-run overwrites that day's file)
+for future time-based views.
 
 ## Setup
 
@@ -62,9 +65,10 @@ readable by the unprivileged nginx process.
 
 - **Data refresh** (`.github/workflows/refresh.yml`): runs once daily and on
   manual dispatch. It fetches the upstream JSON instead of rescraping
-  Artificial Analysis, validates the schema (positive costs, known era range,
-  well-formed rows), normalizes into `public/data/models.json` with an atomic
-  write, preserves the previous snapshot on any failure, and only commits when
+   Artificial Analysis, validates the schema (positive costs, known era range,
+   well-formed rows), normalizes into `public/data/models.json` (latest copy,
+   what the page renders) plus a dated history snapshot with an atomic
+   write, preserves the previous snapshot on any failure, and only commits when
   measurements actually changed (`fetched_at` alone never causes churn).
 
 ## Methodology and limits

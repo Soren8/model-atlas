@@ -3,8 +3,10 @@
 
 Fetches https://llm-frontier.catalystneuro.com/data/llm-frontier.json (which is
 itself derived from Artificial Analysis measurements), validates the schema,
-normalizes the positional ``models`` rows into ``public/data/models.json``,
-and preserves the previous snapshot on any failure via atomic write.
+normalizes the positional ``models`` rows into ``public/data/models.json``
+(the served "latest" copy) plus a dated ``public/data/models-YYYY-MM-DD.json``
+history file, and preserves the previous snapshot on any failure via atomic
+write.
 
 Only the standard library is used so the GitHub Actions refresh job needs no
 extra dependencies.
@@ -254,11 +256,26 @@ def atomic_write_json(path: str, payload: dict) -> None:
         raise
 
 
+def dated_snapshot_path(out: str, fetched_at: str) -> str:
+    """Dated history sibling for the ``out`` snapshot (one file per UTC day).
+
+    ``models.json`` stays the served "latest" copy; ``models-YYYY-MM-DD.json``
+    accumulates the per-day history for future time-based views. A second
+    update on the same day overwrites that day's file.
+    """
+    directory = os.path.dirname(os.path.abspath(out)) or "."
+    date = fetched_at[:10]
+    if not RELEASE_RE.match(date):
+        raise DataError(f"fetched_at has no YYYY-MM-DD date: {fetched_at!r}")
+    return os.path.join(directory, f"models-{date}.json")
+
+
 def refresh(url: str = UPSTREAM_URL, out: str = DEFAULT_OUT) -> str:
     """Fetch, validate, normalize and store the snapshot.
 
-    Returns one of 'updated', 'unchanged'. Raises on any failure without
-    touching the existing snapshot.
+    On change, writes both the dated history file and the ``out`` latest
+    copy. Returns one of 'updated', 'unchanged'. Raises on any failure
+    without touching the existing snapshot.
     """
     raw = fetch_bytes(url)
     try:
@@ -275,6 +292,7 @@ def refresh(url: str = UPSTREAM_URL, out: str = DEFAULT_OUT) -> str:
         if measurements_equal(existing, payload):
             return "unchanged"
 
+    atomic_write_json(dated_snapshot_path(out, payload["fetched_at"]), payload)
     atomic_write_json(out, payload)
     return "updated"
 

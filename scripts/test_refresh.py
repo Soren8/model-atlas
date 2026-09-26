@@ -239,6 +239,44 @@ class RefreshFileTest(unittest.TestCase):
         leftovers = [n for n in os.listdir(self.tmp.name) if n.endswith(".tmp")]
         self.assertEqual(leftovers, [])
 
+    def test_update_writes_dated_snapshot_alongside_latest(self):
+        self._serve(upstream())
+        self.assertEqual(refresh.refresh(out=self.out), "updated")
+
+        with open(self.out) as f:
+            latest = json.load(f)
+        dated = os.path.join(
+            self.tmp.name, f"models-{latest['fetched_at'][:10]}.json")
+        with open(dated) as f:
+            history = json.load(f)
+        self.assertEqual(history, latest)
+
+    def test_unchanged_measurements_touch_no_snapshot_files(self):
+        self._serve(upstream())
+        refresh.refresh(out=self.out)
+        before = {n: open(os.path.join(self.tmp.name, n), "rb").read()
+                  for n in os.listdir(self.tmp.name)}
+
+        self._serve(upstream())
+        self.assertEqual(refresh.refresh(out=self.out), "unchanged")
+        after = {n: open(os.path.join(self.tmp.name, n), "rb").read()
+                 for n in os.listdir(self.tmp.name)}
+        self.assertEqual(after, before)
+
+    def test_same_day_rewrite_reuses_dated_file(self):
+        self._serve(upstream())
+        refresh.refresh(out=self.out)
+
+        changed = upstream(models=[row(name="Model B", cost=0.25)])
+        self._serve(changed)
+        self.assertEqual(refresh.refresh(out=self.out), "updated")
+
+        dated = [n for n in os.listdir(self.tmp.name)
+                 if n.startswith("models-") and n.endswith(".json")]
+        self.assertEqual(len(dated), 1)
+        with open(os.path.join(self.tmp.name, dated[0])) as f:
+            self.assertEqual(json.load(f)["models"][0]["name"], "Model B")
+
     def test_invalid_upstream_leaves_no_partial_file(self):
         self._serve({"models": []})  # fails validation
 

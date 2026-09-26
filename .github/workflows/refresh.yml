@@ -1,9 +1,10 @@
 name: Refresh model data
 
 # Pulls the upstream llm-frontier JSON (derived from Artificial Analysis
-# measurements), normalizes it into public/data/models.json, and commits the
-# result. The refresh script preserves the previous snapshot on any failure
-# and skips the commit when measurements are unchanged.
+# measurements), normalizes it into public/data/models.json (the served
+# "latest" copy) plus a dated public/data/models-YYYY-MM-DD.json history file,
+# and commits the result. The refresh script preserves the previous snapshot
+# on any failure and skips the commit when measurements are unchanged.
 
 on:
   schedule:
@@ -25,12 +26,12 @@ jobs:
         run: python3 scripts/refresh.py
       - name: Commit updated snapshot
         run: |
-          if git diff --quiet -- public/data/models.json; then
+          if git diff --quiet -- public/data/; then
             echo "measurements unchanged, nothing to commit"
             exit 0
           fi
           git config user.name "model-atlas-refresh"
           git config user.email "model-atlas-refresh@users.noreply.github.com"
-          git add public/data/models.json
+          git add public/data/
           git commit -m "data: refresh model snapshot $(date -u +%F)"
           git push

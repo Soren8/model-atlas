@@ -10,3 +10,4 @@
 !public/
 !public/data/
 !public/data/models.json
+!public/data/models-*.json
