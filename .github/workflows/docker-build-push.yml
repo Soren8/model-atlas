@@ -65,6 +65,6 @@ jobs:
         run: >-
           gh api repos/Soren8/iac/dispatches
           --method POST
-          --field event_type=managed-repo-push
+          --field event_type=model-atlas-images
           --field "client_payload[repo]=Soren8/model-atlas"
           --field "client_payload[sha]=$REVISION"

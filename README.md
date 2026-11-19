@@ -54,7 +54,7 @@ readable by the unprivileged nginx process.
   `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets, which the
   sibling `iac` repository's `ci/sync_repo_secrets.yml` sets. Refresh commits also
   trigger a new image build. After a successful publish, the workflow dispatches
-  `managed-repo-push` to `Soren8/iac` with the repository name and exact checked
+  `model-atlas-images` to `Soren8/iac` with the repository name and exact checked
   out commit SHA, so the sibling repository can deploy it. This requires a
   GitHub App installed on `iac`, with repository
   permissions **Contents: read and write** (write is required for repository
