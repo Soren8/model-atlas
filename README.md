@@ -50,9 +50,9 @@ readable by the unprivileged nginx process.
 
 - **VPS image** (`.github/workflows/docker-build-push.yml`): after tests pass,
   builds `linux/amd64` inside Docker and publishes
-  `ghcr.io/soren8/model-atlas:latest` plus a commit tag to GHCR using the
-  built-in `GITHUB_TOKEN`. Make the container package public after its first
-  publish so the VPS can pull it without credentials. Refresh commits also
+  `malakar2/model-atlas:latest` plus a commit tag to Docker Hub using the
+  `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets, which the
+  sibling `iac` repository's `ci/sync_repo_secrets.yml` sets. Refresh commits also
   trigger a new image build. After a successful publish, the workflow dispatches
   `managed-repo-push` to `Soren8/iac` with the repository name and exact checked
   out commit SHA, so the sibling repository can deploy it. This requires a
